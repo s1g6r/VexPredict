@@ -46,9 +46,13 @@ def write_json(path: Path, obj) -> None:
 
 
 def find_season(client: Client, query: str) -> dict:
-    seasons = client.seasons(V5RC_PROGRAM_ID)
     q = query.lower()
+    seasons = client.seasons(V5RC_PROGRAM_ID)
     hits = [s for s in seasons if q in s.get("name", "").lower()]
+    if not hits:  # program ids could change after the VEX/RECF split; search everything
+        seasons = [s for s in client.get_all("seasons")
+                   if "v5" in s.get("name", "").lower() or "vrc" in s.get("name", "").lower()]
+        hits = [s for s in seasons if q in s.get("name", "").lower()]
     if not hits:
         names = "\n  ".join(s.get("name", "?") for s in seasons[:15])
         raise SystemExit(f"No V5RC season matching {query!r}. Some seasons:\n  {names}")
