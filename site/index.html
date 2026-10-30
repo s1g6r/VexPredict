@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VexPredict</title>
+<meta name="description" content="Match predictions, ranking forecasts and pick lists for VEX V5RC High School.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#/" aria-label="VexPredict home"><span class="brand-mark" aria-hidden="true"><i></i><i></i></span>VexPredict</a>
+  <form class="search" id="search" role="search">
+    <label class="sr" for="q">Find a team or event</label>
+    <input id="q" type="search" autocomplete="off" placeholder="Team number or event" enterkeyhint="search">
+    <ul id="suggest" class="suggest" hidden></ul>
+  </form>
+  <nav class="nav" aria-label="Main">
+    <a href="#/leaderboard">Ratings</a>
+    <a href="#/events">Events</a>
+    <a href="#/accuracy">Accuracy</a>
+  </nav>
+</header>
+<div id="demo" class="demo" hidden>Demo data: these teams and events are made up, so the site can be tried before real results load.</div>
+<main id="app" tabindex="-1"><p class="muted">Loading…</p></main>
+<footer class="foot">
+  <p>Built by <a href="https://2360arachnid.com">2360A Arachnid</a>. Not affiliated with VEX Robotics. Results data from the VEX Events API.</p>
+  <p id="generated" class="muted"></p>
+</footer>
+<script src="app.js"></script>
+</body>
+</html>

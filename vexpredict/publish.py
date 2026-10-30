@@ -165,7 +165,11 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
                                    "rating": _r(model2.e.get(t))})
 
     for eid, (teams, rating, pn, std, ts) in snaps.items():
-        pre_event[eid] = run_sim(season, teams, rating, pn, std, noise, u0, ts, eid, played=[])
+        # The qualification schedule is published when quals start, so the
+        # "before the first match" forecast can use the real schedule.
+        sched = [(m.red, m.blue) for m in by_event[eid] if m.is_qual]
+        sched += [(p.red, p.blue) for p in season.pending.get(eid, [])]
+        pre_event[eid] = run_sim(season, teams, rating, pn, std, noise, u0, ts, eid, played=[], remaining=sched)
 
     now_ts = now_ts if now_ts is not None else dt.datetime.now(dt.timezone.utc).timestamp()
     current = dict(model.e)
