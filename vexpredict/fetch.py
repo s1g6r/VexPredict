@@ -69,15 +69,16 @@ def fetch_event(client: Client, event: dict) -> dict:
     eid = event["id"]
     teams = client.event_teams(eid)
     skills = client.event_skills(eid)
-    matches = []
+    matches, rankings = [], []
     for div in event.get("divisions") or []:
-        try:
-            matches.extend(client.division_matches(eid, div["id"]))
-        except ApiError as e:
-            if "404" in str(e):
-                continue
-            raise
-    return {"event": event, "teams": teams, "skills": skills, "matches": matches,
+        for getter, sink in ((client.division_matches, matches), (client.division_rankings, rankings)):
+            try:
+                sink.extend(getter(eid, div["id"]))
+            except ApiError as e:
+                if "404" in str(e):
+                    continue
+                raise
+    return {"event": event, "teams": teams, "skills": skills, "matches": matches, "rankings": rankings,
             "fetched_at": dt.datetime.now(dt.timezone.utc).isoformat()}
 
 
@@ -111,7 +112,8 @@ def main(argv: list[str] | None = None) -> None:
             path = out / "events" / f"{ev['id']}.json"
             if path.exists() and is_final(ev, now):
                 try:
-                    if json.loads(path.read_text()).get("final"):
+                    saved = json.loads(path.read_text())
+                    if saved.get("final") and "rankings" in saved:
                         skipped += 1
                         continue
                 except json.JSONDecodeError:

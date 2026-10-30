@@ -28,6 +28,7 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
             "region": i % regions,
             "base": rng.lognormvariate(3.1, 0.45),     # ~22 points median contribution
             "growth": rng.uniform(0.2, 1.4),            # improvement over the season
+            "auton": rng.random(),                      # autonomous quality (AWP / AP)
         })
     by_region = [[t for t in teams if t["region"] == r] for r in range(regions)]
 
@@ -57,6 +58,7 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
         eid = 50000 + e
         matches, mid = [], 0
         record = {t["id"]: 0 for t in pool}
+        stats = {t["id"]: {"wins": 0, "losses": 0, "ties": 0, "wp": 0, "ap": 0, "sp": 0} for t in pool}
 
         def play(red, blue, rnd, inst, num, ts):
             nonlocal mid
@@ -91,12 +93,25 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
             red, blue = four[:2], four[2:]
             s = play(red, blue, 2, 1, num, ts)
             ts += 420
-            for t in red:
-                record[t["id"]] += 2 if s[0] > s[1] else (1 if s[0] == s[1] else 0)
-            for t in blue:
-                record[t["id"]] += 2 if s[1] > s[0] else (1 if s[0] == s[1] else 0)
-        # alliance selection: top 8 by record pick the strongest available (by true strength, noisy)
-        ranked = sorted(pool, key=lambda t: -record[t["id"]] - rng.random())
+            # autonomous bonus (AP) to the alliance with better autons; AWP per team
+            ra = sum(t["auton"] for t in red) + rng.gauss(0, 0.4)
+            ba = sum(t["auton"] for t in blue) + rng.gauss(0, 0.4)
+            ap_red, ap_blue = (10, 0) if ra > ba else (0, 10)
+            for al, mine, theirs, ap in ((red, s[0], s[1], ap_red), (blue, s[1], s[0], ap_blue)):
+                for t in al:
+                    st = stats[t["id"]]
+                    w = 2 if mine > theirs else (1 if mine == theirs else 0)
+                    st["wins" if w == 2 else ("ties" if w == 1 else "losses")] += 1
+                    awp = 1 if rng.random() < 0.7 * t["auton"] ** 2 else 0
+                    st["wp"] += w + awp
+                    st["ap"] += ap
+                    st["sp"] += min(mine, theirs)
+                    record[t["id"]] = st["wp"]
+        # VEX ranking: WP, then AP, then SP
+        ranked = sorted(pool, key=lambda t: (-stats[t["id"]]["wp"], -stats[t["id"]]["ap"],
+                                             -stats[t["id"]]["sp"], rng.random()))
+        rankings = [dict({"rank": i + 1, "team": {"id": t["id"], "name": t["number"]},
+                          "division": {"id": 1}}, **stats[t["id"]]) for i, t in enumerate(ranked)]
         avail = ranked[:]
         alliances = []
         for cap in ranked[:8]:
@@ -137,7 +152,7 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
                       "divisions": [{"id": 1, "name": "Division 1"}]},
             "teams": [{"id": t["id"], "number": t["number"], "grade": t["grade"],
                        "location": {"country": "United States"}} for t in pool],
-            "skills": skills, "matches": matches, "final": True,
+            "skills": skills, "matches": matches, "rankings": rankings, "final": True,
         }
         (out / "events" / f"{eid}.json").write_text(json.dumps(rec))
     # Skills-only events (no matches): how many real teams first post a score.

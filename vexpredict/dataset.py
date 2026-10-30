@@ -76,6 +76,38 @@ class SkillsResult:
         return self.driver + self.programming
 
 
+@dataclass(frozen=True)
+class Ranking:
+    team_id: int
+    division_id: int
+    rank: int
+    wins: int
+    losses: int
+    ties: int
+    wp: int
+    ap: int
+    sp: int
+
+    @property
+    def played(self) -> int:
+        return self.wins + self.losses + self.ties
+
+    @property
+    def awp(self) -> int:
+        """Autonomous win points = WP beyond what wins and ties explain."""
+        return max(0, self.wp - 2 * self.wins - self.ties)
+
+
+@dataclass(frozen=True)
+class Pending:
+    """A scheduled qualification match with no result yet."""
+    event_id: int
+    division_id: int
+    matchnum: int
+    red: tuple[int, ...]
+    blue: tuple[int, ...]
+
+
 @dataclass
 class Team:
     id: int
@@ -95,6 +127,11 @@ class Season:
     teams: dict[int, Team] = field(default_factory=dict)
     matches: list[Match] = field(default_factory=list)
     skills: list[SkillsResult] = field(default_factory=list)
+    rankings: dict[int, dict[int, Ranking]] = field(default_factory=dict)   # event -> team -> final/current
+    pending: dict[int, list[Pending]] = field(default_factory=dict)         # event -> unplayed quals
+
+    def event_matches(self, event_id: int) -> list[Match]:
+        return [m for m in self.matches if m.event_id == event_id]
 
     def is_hs_match(self, m: Match) -> bool:
         return all(self.teams.get(t, Team(t, "?")).is_hs for t in m.teams)
@@ -123,6 +160,19 @@ def _alliance(m: dict, color: str) -> tuple[tuple[int, ...], int] | None:
                         if t.get("team") and not t.get("sitting"))
             return ids, int(a.get("score") or 0)
     return None
+
+
+def _pending(raw: list[dict], event_id: int) -> list[Pending]:
+    out = []
+    for m in raw:
+        if m.get("round") != QUAL or m.get("scored"):
+            continue
+        red, blue = _alliance(m, "red"), _alliance(m, "blue")
+        if red and blue and red[0] and blue[0] and red[1] == 0 and blue[1] == 0:
+            out.append(Pending(event_id, (m.get("division") or {}).get("id", 0), m.get("matchnum") or 0,
+                               red[0], blue[0]))
+    out.sort(key=lambda p: (p.division_id, p.matchnum))
+    return out
 
 
 def _event_matches(raw: list[dict], event_start: float) -> list[dict]:
@@ -194,6 +244,19 @@ def load_season(slug: str, root: Path | None = None) -> Season:
         avail = end + DAY
         for tid, d in by_team.items():
             season.skills.append(SkillsResult(tid, ev.id, avail, d["driver"], d["programming"]))
+        ranks = {}
+        for r in rec.get("rankings") or []:
+            tid = (r.get("team") or {}).get("id")
+            if tid is None:
+                continue
+            ranks[tid] = Ranking(tid, (r.get("division") or {}).get("id", 0), int(r.get("rank") or 0),
+                                 int(r.get("wins") or 0), int(r.get("losses") or 0), int(r.get("ties") or 0),
+                                 int(r.get("wp") or 0), int(r.get("ap") or 0), int(r.get("sp") or 0))
+        if ranks:
+            season.rankings[ev.id] = ranks
+        pend = _pending(rec.get("matches") or [], ev.id)
+        if pend:
+            season.pending[ev.id] = pend
         for r in _event_matches(rec.get("matches") or [], start):
             for tid in r["red"] + r["blue"]:
                 season.teams.setdefault(tid, Team(tid, str(tid)))
