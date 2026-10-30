@@ -107,6 +107,10 @@ class Pending:
     red: tuple[int, ...]
     blue: tuple[int, ...]
 
+    @property
+    def teams(self) -> tuple[int, ...]:
+        return self.red + self.blue
+
 
 @dataclass
 class Team:
@@ -114,6 +118,8 @@ class Team:
     number: str
     grade: str = ""
     country: str = ""
+    name: str = ""
+    region: str = ""
 
     @property
     def is_hs(self) -> bool:
@@ -129,6 +135,8 @@ class Season:
     skills: list[SkillsResult] = field(default_factory=list)
     rankings: dict[int, dict[int, Ranking]] = field(default_factory=dict)   # event -> team -> final/current
     pending: dict[int, list[Pending]] = field(default_factory=dict)         # event -> unplayed quals
+    event_teams: dict[int, list[int]] = field(default_factory=dict)        # event -> registered teams
+    synthetic: bool = False
 
     def event_matches(self, event_id: int) -> list[Match]:
         return [m for m in self.matches if m.event_id == event_id]
@@ -213,9 +221,12 @@ def load_season(slug: str, root: Path | None = None) -> Season:
     base = root or season_dir(slug)
     meta_path = base / "season.json"
     name = slug
+    synthetic = False
     if meta_path.exists():
-        name = json.loads(meta_path.read_text())["season"].get("name", slug)
-    season = Season(name=name)
+        meta = json.loads(meta_path.read_text())
+        name = meta["season"].get("name", slug)
+        synthetic = bool(meta.get("synthetic"))
+    season = Season(name=name, synthetic=synthetic)
     staged: list[tuple[float, int, dict]] = []
     files = sorted((base / "events").glob("*.json"))
     if not files:
@@ -232,6 +243,9 @@ def load_season(slug: str, root: Path | None = None) -> Season:
             team = season.teams.setdefault(t["id"], Team(t["id"], t.get("number", str(t["id"]))))
             team.grade = t.get("grade") or team.grade
             team.country = loc.get("country") or team.country
+            team.region = loc.get("region") or team.region
+            team.name = t.get("team_name") or team.name
+            season.event_teams.setdefault(ev.id, []).append(t["id"])
         by_team: dict[int, dict[str, int]] = {}
         for s in rec.get("skills") or []:
             tid = (s.get("team") or {}).get("id")

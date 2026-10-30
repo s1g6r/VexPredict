@@ -29,6 +29,8 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
             "base": rng.lognormvariate(3.1, 0.45),     # ~22 points median contribution
             "growth": rng.uniform(0.2, 1.4),            # improvement over the season
             "auton": rng.random(),                      # autonomous quality (AWP / AP)
+            "name": f"Demo Robotics {i + 1}",
+            "state": ["Illinois", "Indiana", "Wisconsin", "Ohio", "Michigan", "Iowa", "Missouri", "Kentucky"][i % regions],
         })
     by_region = [[t for t in teams if t["region"] == r] for r in range(regions)]
 
@@ -150,8 +152,8 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
             "event": {"id": eid, "sku": f"RE-V5RC-25-{eid}", "name": name, "start": _iso(start),
                       "end": _iso(end), "level": "World" if worlds else "Other",
                       "divisions": [{"id": 1, "name": "Division 1"}]},
-            "teams": [{"id": t["id"], "number": t["number"], "grade": t["grade"],
-                       "location": {"country": "United States"}} for t in pool],
+            "teams": [{"id": t["id"], "number": t["number"], "grade": t["grade"], "team_name": t["name"],
+                       "location": {"country": "United States", "region": t["state"]}} for t in pool],
             "skills": skills, "matches": matches, "rankings": rankings, "final": True,
         }
         (out / "events" / f"{eid}.json").write_text(json.dumps(rec))
@@ -174,5 +176,62 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
                "teams": [{"id": t["id"], "number": t["number"], "grade": t["grade"]} for t in pool],
                "skills": skills, "matches": [], "final": True}
         (out / "events" / f"{eid}.json").write_text(json.dumps(rec))
-    (out / "season.json").write_text(json.dumps({"season": {"id": 0, "name": "Synthetic season"}}))
+    (out / "season.json").write_text(json.dumps({"season": {"id": 0, "name": "Synthetic season"}, "synthetic": True}))
     return {"teams": teams, "truth_start": truth, "truth_by_event": truth_by_event}
+
+
+def make_live(out: Path, event_id: int, frac: float = 0.5, seed: int = 0) -> float:
+    """Turn a finished synthetic event into one that is in progress: quals after
+    `frac` lose their scores, elims disappear, and rankings reflect only the
+    played matches. Returns a timestamp to use as 'now'."""
+    rng = random.Random(seed)
+    path = out / "events" / f"{event_id}.json"
+    rec = json.loads(path.read_text())
+    quals = [m for m in rec["matches"] if m["round"] == 2]
+    quals.sort(key=lambda m: m["matchnum"])
+    cut = int(len(quals) * frac)
+    stats: dict[int, dict] = {}
+    names: dict[int, str] = {}
+    for i, m in enumerate(quals):
+        if i >= cut:
+            m["scored"] = False
+            m["started"] = None
+            for a in m["alliances"]:
+                a["score"] = 0
+            continue
+        red, blue = m["alliances"][0], m["alliances"][1]
+        for a, o in ((red, blue), (blue, red)):
+            for t in a["teams"]:
+                tid = t["team"]["id"]
+                names[tid] = t["team"]["name"]
+                st = stats.setdefault(tid, {"wins": 0, "losses": 0, "ties": 0, "wp": 0, "ap": 0, "sp": 0})
+                w = 2 if a["score"] > o["score"] else (1 if a["score"] == o["score"] else 0)
+                st["wins" if w == 2 else ("ties" if w == 1 else "losses")] += 1
+                st["wp"] += w + (1 if rng.random() < 0.15 else 0)
+                st["ap"] += 10 if rng.random() < 0.5 else 0
+                st["sp"] += min(a["score"], o["score"])
+    rec["matches"] = quals
+    order = sorted(stats, key=lambda t: (-stats[t]["wp"], -stats[t]["ap"], -stats[t]["sp"]))
+    rec["rankings"] = [dict({"rank": i + 1, "team": {"id": t, "name": names[t]}, "division": {"id": 1}}, **stats[t])
+                       for i, t in enumerate(order)]
+    rec["final"] = False
+    path.write_text(json.dumps(rec))
+    played = [m for m in quals[:cut] if m.get("started")]
+    start = dt.datetime.fromisoformat(rec["event"]["start"].replace("Z", "+00:00")).timestamp()
+    return max([start + 3600] + [dt.datetime.fromisoformat(m["started"].replace("Z", "+00:00")).timestamp()
+                                 for m in played]) + 600
+
+
+def add_upcoming(out: Path, after_ts: float, teams: list[dict], n: int = 36, seed: int = 0) -> int:
+    rng = random.Random(seed)
+    eid = 90000
+    pool = rng.sample(teams, n)
+    start = after_ts + 10 * DAY
+    rec = {"event": {"id": eid, "sku": f"RE-V5RC-26-{eid}", "name": "Demo Invitational (upcoming)",
+                     "start": _iso(start), "end": _iso(start + DAY), "level": "Other",
+                     "divisions": [{"id": 1, "name": "Division 1"}]},
+           "teams": [{"id": t["id"], "number": t["number"], "grade": t["grade"], "team_name": t["name"],
+                      "location": {"country": "United States", "region": t["state"]}} for t in pool],
+           "skills": [], "matches": [], "rankings": [], "final": False}
+    (out / "events" / f"{eid}.json").write_text(json.dumps(rec))
+    return eid
