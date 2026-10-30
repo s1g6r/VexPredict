@@ -1,0 +1,206 @@
+"""Turn raw per-event API files into one clean, time-ordered season dataset."""
+from __future__ import annotations
+
+import datetime as dt
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from .config import HIGH_SCHOOL, season_dir
+
+PRACTICE, QUAL, QF, SF, FINAL, R16 = 1, 2, 3, 4, 5, 6
+ROUND_ORDER = {QUAL: 0, R16: 1, QF: 2, SF: 3, FINAL: 4}  # practice is dropped
+DAY = 86400.0
+
+
+@dataclass(frozen=True)
+class Match:
+    idx: int                 # position in the global time-ordered stream
+    event_id: int
+    division_id: int
+    round: int
+    instance: int
+    matchnum: int
+    ts: float                # seconds since epoch, used only for ordering
+    red: tuple[int, ...]
+    blue: tuple[int, ...]
+    red_score: int
+    blue_score: int
+
+    @property
+    def is_qual(self) -> bool:
+        return self.round == QUAL
+
+    @property
+    def is_elim(self) -> bool:
+        return self.round != QUAL
+
+    @property
+    def teams(self) -> tuple[int, ...]:
+        return self.red + self.blue
+
+    @property
+    def outcome(self) -> float:
+        """1 if red won, 0 if blue won, 0.5 for a tie."""
+        if self.red_score > self.blue_score:
+            return 1.0
+        if self.red_score < self.blue_score:
+            return 0.0
+        return 0.5
+
+
+@dataclass(frozen=True)
+class Event:
+    id: int
+    sku: str
+    name: str
+    start: float
+    end: float
+    level: str
+
+    @property
+    def is_worlds(self) -> bool:
+        return "world championship" in self.name.lower()
+
+
+@dataclass(frozen=True)
+class SkillsResult:
+    team_id: int
+    event_id: int
+    available_ts: float      # results usable for predictions after this time
+    driver: int
+    programming: int
+
+    @property
+    def combined(self) -> int:
+        return self.driver + self.programming
+
+
+@dataclass
+class Team:
+    id: int
+    number: str
+    grade: str = ""
+    country: str = ""
+
+    @property
+    def is_hs(self) -> bool:
+        return self.grade == HIGH_SCHOOL
+
+
+@dataclass
+class Season:
+    name: str
+    events: dict[int, Event] = field(default_factory=dict)
+    teams: dict[int, Team] = field(default_factory=dict)
+    matches: list[Match] = field(default_factory=list)
+    skills: list[SkillsResult] = field(default_factory=list)
+
+    def is_hs_match(self, m: Match) -> bool:
+        return all(self.teams.get(t, Team(t, "?")).is_hs for t in m.teams)
+
+    def team_label(self, tid: int) -> str:
+        t = self.teams.get(tid)
+        return t.number if t else str(tid)
+
+
+def _ts(s: str | None) -> float | None:
+    if not s:
+        return None
+    try:
+        d = dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=dt.timezone.utc)
+    return d.timestamp()
+
+
+def _alliance(m: dict, color: str) -> tuple[tuple[int, ...], int] | None:
+    for a in m.get("alliances") or []:
+        if a.get("color") == color:
+            ids = tuple(t["team"]["id"] for t in a.get("teams") or []
+                        if t.get("team") and not t.get("sitting"))
+            return ids, int(a.get("score") or 0)
+    return None
+
+
+def _event_matches(raw: list[dict], event_start: float) -> list[dict]:
+    rows = []
+    for m in raw:
+        rnd = m.get("round")
+        if rnd not in ROUND_ORDER:
+            continue
+        red, blue = _alliance(m, "red"), _alliance(m, "blue")
+        if not red or not blue or not red[0] or not blue[0]:
+            continue
+        if not m.get("scored", True) and red[1] == 0 and blue[1] == 0:
+            continue
+        if m.get("scored") is False:
+            continue
+        rows.append({
+            "division_id": (m.get("division") or {}).get("id", 0),
+            "round": rnd, "instance": m.get("instance") or 0, "matchnum": m.get("matchnum") or 0,
+            "time": _ts(m.get("started")) or _ts(m.get("scheduled")),
+            "red": red[0], "blue": blue[0], "red_score": red[1], "blue_score": blue[1],
+        })
+    # Use real start times when every match has one; otherwise the canonical
+    # order (all quals, then R16 -> QF -> SF -> F). Timestamps are then forced
+    # to be monotone along that order so ordering is never ambiguous.
+    canon = lambda r: (ROUND_ORDER[r["round"]], r["division_id"], r["instance"], r["matchnum"])  # noqa: E731
+    if rows and all(r["time"] is not None for r in rows):
+        rows.sort(key=lambda r: (r["time"],) + canon(r))
+    else:
+        rows.sort(key=canon)
+    prev = event_start
+    for r in rows:
+        t = r["time"] if r["time"] is not None and r["time"] >= prev else prev + 1.0
+        r["time"] = prev = t
+    return rows
+
+
+def load_season(slug: str, root: Path | None = None) -> Season:
+    base = root or season_dir(slug)
+    meta_path = base / "season.json"
+    name = slug
+    if meta_path.exists():
+        name = json.loads(meta_path.read_text())["season"].get("name", slug)
+    season = Season(name=name)
+    staged: list[tuple[float, int, dict]] = []
+    files = sorted((base / "events").glob("*.json"))
+    if not files:
+        raise SystemExit(f"No event files in {base / 'events'}. Run `python3 -m vexpredict.fetch` first.")
+    for f in files:
+        rec = json.loads(f.read_text())
+        e = rec["event"]
+        start = _ts(e.get("start")) or 0.0
+        end = _ts(e.get("end")) or start
+        ev = Event(e["id"], e.get("sku", ""), e.get("name", ""), start, end, e.get("level") or "")
+        season.events[ev.id] = ev
+        for t in rec.get("teams") or []:
+            loc = t.get("location") or {}
+            team = season.teams.setdefault(t["id"], Team(t["id"], t.get("number", str(t["id"]))))
+            team.grade = t.get("grade") or team.grade
+            team.country = loc.get("country") or team.country
+        by_team: dict[int, dict[str, int]] = {}
+        for s in rec.get("skills") or []:
+            tid = (s.get("team") or {}).get("id")
+            typ = s.get("type")
+            if tid is None or typ not in ("driver", "programming"):
+                continue
+            d = by_team.setdefault(tid, {"driver": 0, "programming": 0})
+            d[typ] = max(d[typ], int(s.get("score") or 0))
+            season.teams.setdefault(tid, Team(tid, (s.get("team") or {}).get("name", str(tid))))
+        avail = end + DAY
+        for tid, d in by_team.items():
+            season.skills.append(SkillsResult(tid, ev.id, avail, d["driver"], d["programming"]))
+        for r in _event_matches(rec.get("matches") or [], start):
+            for tid in r["red"] + r["blue"]:
+                season.teams.setdefault(tid, Team(tid, str(tid)))
+            staged.append((r["time"], ev.id, r))
+    staged.sort(key=lambda x: (x[0], x[1]))
+    for i, (t, eid, r) in enumerate(staged):
+        season.matches.append(Match(i, eid, r["division_id"], r["round"], r["instance"], r["matchnum"],
+                                    t, r["red"], r["blue"], r["red_score"], r["blue_score"]))
+    season.skills.sort(key=lambda s: s.available_ts)
+    return season
