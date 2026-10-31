@@ -202,6 +202,7 @@ def test_web_pairs(published):
         seen.append(first[key])
     assert len(seen) == len(together) and seen == sorted(seen)
     assert w["champ"] == []          # this season's Worlds is still being played
+    assert all(season.teams[tid].number == num for tid, num in zip(t["id"], t["num"]))
 
 
 def test_world_champions(tmp_path):

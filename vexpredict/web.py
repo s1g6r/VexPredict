@@ -3,8 +3,8 @@ for The Web (app.2360arachnid.com).
 
     web.json
       season, slug, updated
-      t     teams, column arrays: num, name, reg (region or country), lat, lon,
-            hs (1 = High School), r (current rating, 0 if none)
+      t     teams, column arrays: id (VEX team id), num, name, reg (region or
+            country), lat, lon, hs (1 = High School), r (current rating, 0 if none)
       e     events, column arrays: name, date, lat, lon
       p     partner pairs, flattened: [a, b, matches together, wins together,
             event of their first match together, ...], in the order the pairs
@@ -64,10 +64,11 @@ def web_data(season: Season, slug: str, rating: Callable[[int], float | None], n
     event_ids = sorted({rec[2] for rec in pairs.values()}, key=lambda e: season.events[e].start)
     eix = {e: i for i, e in enumerate(event_ids)}
 
-    cols: dict[str, list] = {k: [] for k in ("num", "name", "reg", "lat", "lon", "hs", "r")}
+    cols: dict[str, list] = {k: [] for k in ("id", "num", "name", "reg", "lat", "lon", "hs", "r")}
     for t in team_ids:
         tm = season.teams.get(t)
         r = rating(t)
+        cols["id"].append(t)
         cols["num"].append(tm.number if tm else str(t))
         cols["name"].append(tm.name if tm else "")
         cols["reg"].append((tm.region or tm.country) if tm else "")
