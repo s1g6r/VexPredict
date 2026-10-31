@@ -141,3 +141,18 @@ def test_hub_files(published):
     assert up["hs"] == len(up["teams"]) and up["ratings"] == sorted(up["ratings"], reverse=True)
     assert "hs" not in next(e for e in plan["events"] if e["id"] == 95000)   # no team list yet
     assert plan["team_loc"] and all(len(v) == 3 for v in plan["team_loc"].values())
+
+
+def test_qualification_labels():
+    """Event-code qualifications show the event's name; Middle School
+    championships listed by blended events don't count for High School teams."""
+    from vexpredict import hub
+    from vexpredict.dataset import Award, Event, Season, Team
+    s = Season(name="x")
+    s.teams[1] = Team(1, "1A", grade="High School")
+    s.events[5] = Event(5, "E5", "Local", 0.0, 0.0, "Other")
+    s.calendar[9] = Event(9, "VE-V5-26-9", "Illinois State Championship (HS)", 0.0, 0.0, "Regional")
+    s.awards.append(Award(5, "Excellence Award (V5)", ("VE-V5-26-9", "Event Region Championship",
+                                                      "Illinois State Championship (MS)"), (1,)))
+    got = [r["target"] for r in hub.qualifications(s)[1]]
+    assert got == ["Illinois State Championship (HS)", "Region championship (States)"]

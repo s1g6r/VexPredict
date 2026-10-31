@@ -30,14 +30,30 @@ def _r(x, nd=1):
     return None if x is None else round(float(x), nd)
 
 
-def _target_label(q: str) -> str:
-    """Tidy an award's qualification string for display."""
-    return " ".join(q.split())
+GENERIC = {"Event Region Championship": "Region championship (States)"}
+
+
+def target_namer(season: Season) -> Callable[[str], str]:
+    """An award's qualification is either a generic championship ("Event
+    Region Championship", "World Championship") or a specific event's code
+    (e.g. VE-V5-26-66512); show the event's name for the latter."""
+    by_sku = {ev.sku: ev.name for ev in season.calendar.values() if ev.sku}
+
+    def name(q: str) -> str:
+        q = " ".join(q.split())
+        return by_sku.get(q) or GENERIC.get(q, q)
+    return name
+
+
+def _middle_school(label: str) -> bool:
+    low = label.lower()
+    return "(ms)" in low or "middle school" in low
 
 
 def qualifications(season: Season) -> dict[int, list[dict]]:
     """team id -> the qualifying awards it has won (High School teams only)."""
     out: dict[int, list[dict]] = defaultdict(list)
+    _target_label = target_namer(season)
     for a in sorted(season.awards, key=lambda a: season.events[a.event_id].start if a.event_id in season.events else 0):
         if not a.qualifications:
             continue
@@ -47,7 +63,10 @@ def qualifications(season: Season) -> dict[int, list[dict]]:
             if not t or not t.is_hs:
                 continue
             for q in a.qualifications:
-                out[tid].append({"target": _target_label(q), "award": a.name, "event_id": a.event_id,
+                label = _target_label(q)
+                if _middle_school(label):
+                    continue   # blended events list the MS championship too; not a High School team's spot
+                out[tid].append({"target": label, "award": a.name, "event_id": a.event_id,
                                  "event": ev.name if ev else "", "date": _iso(ev.start) if ev else ""})
     return out
 

@@ -150,17 +150,16 @@ async function home() {
   const live = liveAll.filter(e => !e.league), leagues = liveAll.length - live.length;
   const today = new Date().toISOString().slice(0, 10);
   const upcoming = META.events.filter(e => e.status === "upcoming" && e.date >= today).reverse().slice(0, 5);
-  const [boardAll, q, sk, plan] = await Promise.all([get(`${SEASON}/leaderboard.json`),
-    get(`${SEASON}/qualify.json`).catch(() => null), get(`${SEASON}/skills.json`).catch(() => null),
-    get(`${SEASON}/plan.json`).catch(() => null)]);
+  const [boardAll, q, sk] = await Promise.all([get(`${SEASON}/leaderboard.json`),
+    get(`${SEASON}/qualify.json`).catch(() => null), get(`${SEASON}/skills.json`).catch(() => null)]);
   const board = boardAll.slice(0, 10);
-  const soon = plan ? plan.events.filter(e => { const d = Date.parse(e.date) - Date.now(); return !e.league && d > -864e5 && d < 30 * 864e5; }).length : 0;
+  const soon = META.events.filter(e => { const d = Date.parse(e.date) - Date.now(); return e.status === "upcoming" && !e.league && d > -864e5 && d < 30 * 864e5; }).length;
   const qTeams = q ? Object.keys(q.teams).length : 0;
   const tools = [
     ["#/events", "Predict", "Win odds for every match, ranking forecasts, match briefs and a live pick list.", `${META.events.filter(e => e.status === "live").length} events live now`],
     ["#/qualify", "Qualify", "Who has earned a spot at States or Worlds, and who's next in line on skills.", q ? (qTeams ? `${qTeams} teams qualified so far` : "Fills in as events post awards") : ""],
     ["#/skills", "Skills", "Season skills standings by region, with a filter for teams still without a spot.", sk && sk.length ? `Top score: ${sk[0].score} (${esc(sk[0].number)})` : ""],
-    ["#/plan", "Plan", "Upcoming events near you, how strong each field is, and where you'd rank.", plan ? `${soon} events in the next 30 days` : ""],
+    ["#/plan", "Plan", "Upcoming events near you, how strong each field is, and where you'd rank.", soon ? `${soon} events with registered teams in the next 30 days` : "See the season's calendar"],
   ].filter(t => t[3] !== "" || t[0] === "#/events");
   let next = "";
   const me = myTeam();

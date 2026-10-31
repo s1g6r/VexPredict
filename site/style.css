@@ -213,3 +213,4 @@ textarea, input[type=text] { width: 100%; font: inherit; padding: 8px; border-ra
 .tool h2 { margin: 0; font: 700 20px var(--num); }
 .tool p { margin: 0; color: var(--ink-2); }
 .tool .stat-line { font: 600 15px var(--num); color: var(--ink); font-variant-numeric: tabular-nums; }
+select { max-width: 100%; text-overflow: ellipsis; }
