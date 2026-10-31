@@ -44,7 +44,15 @@ jobs:
       - name: Pull results
         env:
           VEX_TOKEN: ${{ secrets.VEX_TOKEN }}
-        run: python -m vexpredict.fetch --season "$SEASON"
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          # The 10-minute event-day runs only re-pull events on today (and leagues
+          # every few hours); the daily run and manual runs re-pull everything unfinished.
+          if [ "$SCHEDULE" = "17 9 * * *" ] || [ -z "$SCHEDULE" ]; then
+            python -m vexpredict.fetch --season "$SEASON"
+          else
+            python -m vexpredict.fetch --season "$SEASON" --live-only
+          fi
       - name: Publish
         run: python -m vexpredict.publish --season "$SEASON" --tune-from "$TUNE_FROM"
       - uses: actions/upload-pages-artifact@v3

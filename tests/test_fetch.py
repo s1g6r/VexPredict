@@ -147,3 +147,19 @@ def test_retry_after_zero_still_backs_off(monkeypatch):
     backoffs = [s for s in sleeps if s >= apimod.BACKOFF_START]
     assert backoffs[:3] == [5.0, 10.0, 20.0]
     assert c.min_interval > 0.25          # slowed down after the 429s
+
+
+def test_live_only_refresh_picks_todays_events_and_stale_leagues():
+    from vexpredict.fetch import wanted_now
+    now = dt.datetime(2026, 10, 31, 15, tzinfo=dt.timezone.utc)
+    iso = lambda d: d.isoformat()  # noqa: E731
+    today = {"start": iso(now.replace(hour=0)), "end": iso(now.replace(hour=0))}
+    last_week = {"start": iso(now - dt.timedelta(days=7)), "end": iso(now - dt.timedelta(days=7))}
+    league = {"start": iso(now - dt.timedelta(days=20)), "end": iso(now + dt.timedelta(days=60))}
+    fresh = {"fetched_at": iso(now - dt.timedelta(hours=1))}
+    stale = {"fetched_at": iso(now - dt.timedelta(hours=8))}
+    assert wanted_now(today, fresh, now)              # on today: every run
+    assert not wanted_now(last_week, stale, now)      # finished and saved: leave it
+    assert wanted_now(last_week, None, now)           # never saved: get it
+    assert not wanted_now(league, fresh, now)         # league pulled an hour ago
+    assert wanted_now(league, stale, now)             # league pulled 8 hours ago

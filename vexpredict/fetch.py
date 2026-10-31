@@ -24,6 +24,8 @@ from . import config
 from .config import V5RC_PROGRAM_ID, load_token, season_dir, slugify
 
 FINAL_AFTER_DAYS = 3  # results are treated as final this long after an event ends
+LEAGUE_DAYS = 2       # events longer than this are leagues (one night a week for months)
+LEAGUE_REFRESH_HOURS = 6
 SKIP_EVENT_TYPES = {"workshop"}
 
 
@@ -66,6 +68,23 @@ def is_final(event: dict, now: dt.datetime) -> bool:
     return bool(end) and (now - end).days >= FINAL_AFTER_DAYS
 
 
+def wanted_now(event: dict, saved: dict | None, now: dt.datetime) -> bool:
+    """--live-only: is this event worth re-pulling on a frequent (event-day)
+    run? Events on today (a day either side, for time zones) always; leagues
+    at most every few hours; nothing else that is already saved."""
+    if saved is None:
+        return True
+    start, end = parse_date(event.get("start")), parse_date(event.get("end")) or parse_date(event.get("start"))
+    if not start or not end:
+        return False
+    if not (start - dt.timedelta(days=1) <= now <= end + dt.timedelta(days=1)):
+        return False
+    if (end - start).days > LEAGUE_DAYS:
+        got = parse_date(saved.get("fetched_at"))
+        return not got or now - got > dt.timedelta(hours=LEAGUE_REFRESH_HOURS)
+    return True
+
+
 def fetch_event(client: Client, event: dict) -> dict:
     eid = event["id"]
     teams = client.event_teams(eid)
@@ -98,6 +117,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--ahead-days", type=float, default=14,
                     help="also save events starting within this many days (team lists for pre-event forecasts)")
     ap.add_argument("--min-interval", type=float, default=0.25, help="seconds between API requests")
+    ap.add_argument("--live-only", action="store_true",
+                    help="quick refresh: only events on today (and leagues every few hours); for frequent runs")
     args = ap.parse_args(argv)
 
     client = Client(load_token(), base=config.API_BASE, min_interval=args.min_interval)
@@ -121,6 +142,14 @@ def main(argv: list[str] | None = None) -> None:
     try:
         for i, ev in enumerate(events, 1):
             path = out / "events" / f"{ev['id']}.json"
+            if args.live_only:
+                try:
+                    saved = json.loads(path.read_text()) if path.exists() else None
+                except json.JSONDecodeError:
+                    saved = None
+                if not wanted_now(ev, saved, now):
+                    skipped += 1
+                    continue
             if path.exists() and is_final(ev, now):
                 try:
                     saved = json.loads(path.read_text())
