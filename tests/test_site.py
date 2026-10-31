@@ -110,7 +110,7 @@ def test_every_page_renders_without_errors(server):
         page.select_option("#pd", "0")
         page.select_option("#pw", "0")
         page.wait_for_timeout(100)
-        assert "Away" in page.inner_text("#pbody") and page.locator("#pbody tbody tr").count() >= 12
+        assert "away" in page.inner_text("#pbody").lower() and page.locator("#pbody tbody tr").count() >= 12
         assert any(c.startswith("#") for c in page.locator("#pbody tbody td:last-child").all_inner_texts())
         # home shows the next match for my team
         page.goto(url + "#/")

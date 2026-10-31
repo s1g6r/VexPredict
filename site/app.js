@@ -179,6 +179,7 @@ async function home() {
     }
   }
   app.innerHTML = `
+    <p class="eyebrow">${esc(META.season.replace(/^VEX V5 Robotics Competition\s*/, "").replace(":", " ·"))} · V5RC High School</p>
     <h1>Everything for your VEX season</h1>
     <p class="lede">Free tools for VEX V5RC High School: match predictions with published accuracy, qualification tracking, skills standings and an event planner. No accounts, no logins.</p>
     <div class="tools">${tools.map(([href, name, blurb, stat]) => `<a class="tool" href="${href}"><h2>${name}</h2><p>${blurb}</p>${stat ? `<span class="stat-line">${stat}</span>` : ""}</a>`).join("")}</div>
