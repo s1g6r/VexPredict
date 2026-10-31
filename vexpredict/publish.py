@@ -5,6 +5,7 @@
 Writes site/data/<season>/:
   meta.json          season, model, generated time, event index
   leaderboard.json   every High School team's current rating and rank
+  scan.json          every High School team's card and every event's team list, for VEX Scan
   events/<id>.json   teams (rating, skills, auton rates), every match with the
                      prediction made *before* it was played, predicted final
                      rankings and captain odds (pre-event, and live if quals
@@ -30,7 +31,7 @@ from .config import REPORTS_DIR, ROOT, slugify
 from .dataset import DAY, LONG_EVENT, Match, Season, load_season
 from .models.base import Model
 from .models.epa import EPAMix, EPASkills, build_epa, fit_skills_map
-from . import hub, web
+from . import hub, scan, web
 from .tuned import tuned_settings
 from .simulator import (ScoreNoise, SimInputs, captain_count, fit_score_noise, simulate,
                         standings_from_matches, standings_from_rankings, team_rates)
@@ -359,6 +360,11 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
     _write(out / "plan.json", hub.plan_data(season, lambda t: rating_now(t) if played_n.get(t) else None, now_ts))
     # the alliance web for The Web (app.2360arachnid.com)
     _write(out / "web.json", web.web_data(season, slug, lambda t: rating_now(t) if played_n.get(t) else None, now_ts))
+    # VEX Scan (app.2360arachnid.com): every High School team's card in one file
+    shown = {t: v for t, v in hs_rated}
+    k = scan.fit_k(lambda red, blue: model.predict_teams(red, blue).p_red, shown)
+    _write(out / "scan.json", scan.scan_data(season, slug, shown, {b["id"]: b["rank"] for b in board},
+                                             {t: tuple(v) for t, v in record.items()}, k, now_ts))
 
     team_matches: dict[int, list] = defaultdict(list)
     for m in season.matches:

@@ -240,3 +240,30 @@ def test_world_champions(tmp_path):
     final = max((m for m in s.matches if m.event_id == worlds.id and m.round == 5), key=lambda m: m.ts)
     winner = final.red if final.red_score >= final.blue_score else final.blue
     assert len(champ) == 2 and set(champ) == set(winner)
+
+
+def test_scan_file(published):
+    """VEX Scan's file: every High School team once, ratings and ranks that
+    match the leaderboard, event lists that point at real teams, and a win
+    formula that agrees with the model."""
+    season, out = published
+    d = json.loads((out / "scan.json").read_text())
+    t = d["t"]
+    n = len(t["id"])
+    assert n == len({x.id for x in season.teams.values() if x.is_hs}) and len(set(t["num"])) == n
+    assert all(len(col) == n for col in t.values())
+    board = {b["id"]: b for b in json.loads((out / "leaderboard.json").read_text())}
+    for i, tid in enumerate(t["id"]):
+        if tid in board:
+            assert t["rk"][i] == board[tid]["rank"] and abs(t["r"][i] - board[tid]["rating"]) < 0.06
+        else:
+            assert t["r"][i] is None and t["rk"][i] == 0
+    assert d["e"] and all(e["t"] and max(e["t"]) < n for e in d["e"])
+    assert 0.005 < d["k"] < 0.5
+
+
+def test_scan_short_names():
+    from vexpredict.scan import short_name
+    assert short_name("Lake Park High School VEX V5 Robotics Competition: Override High School Teams") == "Lake Park"
+    assert short_name("WAVE at WPI Signature Event") == "WAVE at WPI Signature Event"
+    assert short_name("VEX V5 Robotics Competition") == "VEX V5 Robotics Competition"   # nothing left: keep it
