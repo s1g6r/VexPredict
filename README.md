@@ -107,7 +107,7 @@ Its score predictions miss by 19.8 points per alliance on average, against
 To be clear about how it was built: the adaptive model was added after the
 first real backtest showed this late-season fade. Its settings were still chosen
 on the training period only (that period alone already prefers it: training
-log loss 0.4852 against 0.4880). But the idea itself came from looking at
+log loss 0.4852 against 0.4873). But the idea itself came from looking at
 test-period results, so the clean out-of-sample check is Override. That
 season's accuracy will be published once enough of it has been played.
 
