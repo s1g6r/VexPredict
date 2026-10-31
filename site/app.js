@@ -156,7 +156,7 @@ async function home() {
   const soon = META.events.filter(e => { const d = Date.parse(e.date) - Date.now(); return e.status === "upcoming" && !e.league && d > -864e5 && d < 30 * 864e5; }).length;
   const qTeams = q ? Object.keys(q.teams).length : 0;
   const tools = [
-    ["#/events", "Predict", "Win odds for every match, ranking forecasts, match briefs and a live pick list.", `${META.events.filter(e => e.status === "live").length} events live now`],
+    ["#/events", "Predict", "Win odds for every match, ranking forecasts, match briefs and a live pick list.", `${META.events.filter(e => e.status === "live" && !e.league).length} tournaments live now`],
     ["#/qualify", "Qualify", "Who has earned a spot at States or Worlds, and who's next in line on skills.", q ? (qTeams ? `${qTeams} teams qualified so far` : "Fills in as events post awards") : ""],
     ["#/skills", "Skills", "Season skills standings by region, with a filter for teams still without a spot.", sk && sk.length ? `Top score: ${sk[0].score} (${esc(sk[0].number)})` : ""],
     ["#/plan", "Plan", "Upcoming events near you, how strong each field is, and where you'd rank.", soon ? `${soon} events with registered teams in the next 30 days` : "See the season's calendar"],
@@ -740,8 +740,8 @@ async function planPage() {
       return `#${better + 1} of ${e.ratings.length + (registered ? 0 : 1)}`;
     };
     $("#pbody").innerHTML = rows.length ? `<p class="muted">${rows.length} event${rows.length === 1 ? "" : "s"}.</p><div class="panel tablewrap"><table><thead><tr>
-        <th class="n hide-m">Date</th><th>Event</th>${loc ? `<th class="n">Away</th>` : ""}<th class="n">Teams</th><th class="n hide-m">Median</th><th class="n hide-m">Top 8</th><th class="n">${state.team ? "You" : "Place"}</th></tr></thead><tbody>
-      ${rows.map(e => `<tr class="${e.teams?.includes(state.team) ? "mine" : ""}"><td class="n hide-m">${e.date.slice(5)}</td>
+        <th>Event</th>${loc ? `<th class="n">Away</th>` : ""}<th class="n">Teams</th><th class="n hide-m">Median</th><th class="n hide-m">Top 8</th><th class="n">${state.team ? "You" : "Place"}</th></tr></thead><tbody>
+      ${rows.map(e => `<tr class="${e.teams?.includes(state.team) ? "mine" : ""}">
         <td>${hasPage.has(e.id) ? `<a href="#/event/${e.id}">${esc(e.name)}</a>` : `<a href="${official(e.sku)}" target="_blank" rel="noopener">${esc(e.name)}</a>`}${e.level !== "Other" ? ` <span class="pill">${esc(e.level)}</span>` : ""}${e.teams?.includes(state.team) ? ` <span class="pill good">Registered</span>` : ""}
           <span class="subnote">${esc([new Date(e.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }), e.city, e.region, e.country !== "United States" ? e.country : ""].filter(Boolean).join(" · "))}</span></td>
         ${loc ? `<td class="n" style="white-space:nowrap">${e.km == null ? "–" : `${Math.round(conv(e.km)).toLocaleString()} ${unit}`}</td>` : ""}

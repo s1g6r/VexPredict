@@ -123,7 +123,7 @@ def plan_data(season: Season, rating: Callable[[int], float | None], now_ts: flo
     today = now_ts - 86400   # keep events that started today
     events = []
     for eid, ev in season.calendar.items():
-        if ev.end < today:
+        if ev.end < today or ev.name.strip().upper().startswith(("CANCELED", "CANCELLED")):
             continue
         reg = season.event_teams.get(eid)
         rec = {"id": eid, "sku": ev.sku, "name": ev.name, "date": _iso(ev.start), "end": _iso(ev.end),
