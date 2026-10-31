@@ -164,9 +164,8 @@ Push Back backtest tuned.
 
 The API token stays in GitHub's secret store and never reaches the site.
 
-Until then, `python3 -m vexpredict.bundle --seasons override` packs the
-published site into chunks that can be hosted privately (that's how the preview
-link is made).
+For a private copy, `python3 -m vexpredict.bundle --seasons override` packs the
+published site into a few files that can be hosted anywhere.
 
 ## Roadmap
 
@@ -175,5 +174,5 @@ link is made).
 3. ~~Match briefs and scouting tags~~ (tags are per-browser; a shared team notebook needs a small backend)
 4. ~~Live pick list~~
 5. ~~Divisions at big events~~
-6. Launch: go public, forum post, public JSON API (the files in `site/data` already are one)
+6. ~~Go live~~ (stats.2360arachnid.com). Next: forum post, public JSON API (the files in `site/data` already are one)
 7. Re-tune on Override once it has enough matches (the game changed; Push Back settings are the starting point)
