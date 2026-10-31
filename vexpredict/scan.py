@@ -12,7 +12,9 @@ plate against the event's teams and show a card with no further requests
                id, num, name, loc ("City, Region"), r (rating, null if no matches),
                rk (world rank among rated HS teams, 0 if unrated), rec ("W-L-T"),
                sk ([combined, auto, driver] best single-event skills, or 0),
-               q (1 = qualified for States, 2 = Worlds, 3 = both)
+               q bits: 1 = qualified for States, 2 = Worlds; 4 = States pending,
+                 8 = Worlds pending (the award qualifies only if the event gets
+                 enough spots, which RECF hasn't set yet)
       e      events: id, name (shortened), date, end, place, t (team indices)
 """
 from __future__ import annotations
@@ -24,7 +26,7 @@ import re
 from typing import Callable
 
 from .dataset import Season
-from .hub import REGION, WORLDS, best_skills, qualifications
+from .hub import REGION, WORLDS, best_skills, qualifications, team_status
 
 
 def _iso(ts: float) -> str:
@@ -83,7 +85,8 @@ def scan_data(season: Season, slug: str, ratings: dict[int, float], ranks: dict[
         r = ratings.get(t.id)
         rec = records.get(t.id)
         sk = skills.get(t.id)
-        tg = {q["target"] for q in quals.get(t.id, [])}
+        recs = quals.get(t.id, [])
+        st = {g: team_status(recs, g) for g in (REGION, WORLDS)}
         cols["id"].append(t.id)
         cols["num"].append(t.number)
         cols["name"].append(t.name or "")
@@ -92,7 +95,8 @@ def scan_data(season: Season, slug: str, ratings: dict[int, float], ranks: dict[
         cols["rk"].append(ranks.get(t.id, 0))
         cols["rec"].append("-".join(map(str, rec)) if rec and sum(rec) else "")
         cols["sk"].append(list(sk[:3]) if sk else 0)
-        cols["q"].append((1 if REGION in tg else 0) | (2 if WORLDS in tg else 0))
+        cols["q"].append((1 if st[REGION] in ("listed", "expected") else 4 if st[REGION] == "possible" else 0)
+                         | (2 if st[WORLDS] in ("listed", "expected") else 8 if st[WORLDS] == "possible" else 0))
 
     teams_at: dict[int, set[int]] = {eid: set(ts) for eid, ts in season.event_teams.items()}
     for m in season.matches:

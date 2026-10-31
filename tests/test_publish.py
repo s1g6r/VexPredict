@@ -118,22 +118,30 @@ def test_old_unplayed_matches_dont_keep_an_event_live(tmp_path):
 def test_hub_files(published):
     """Qualification, skills standings and the event planner come straight
     from the published results."""
+    from vexpredict import hub
     season, out = published
     q = json.loads((out / "qualify.json").read_text())
     names = {t["name"] for t in q["targets"]}
     assert names == {"Region championship (States)", "World Championship"}
     # every qualification is a real award win by that team
     wins = {(a.event_id, t) for a in season.awards for t in a.team_ids}
+    skilled = {(x.event_id, x.team_id) for x in season.skills}
     for tid, rec in q["teams"].items():
         assert season.teams[int(tid)].is_hs
         for r in rec["quals"]:
-            assert (r["event_id"], int(tid)) in wins
+            assert r["status"] in ("listed", "expected", "possible")
+            if r["award"] == hub.PASSED:      # a passed-down spot: from the skills list at that event
+                assert (r["event_id"], int(tid)) in skilled
+            else:
+                assert (r["event_id"], int(tid)) in wins
     sk = json.loads((out / "skills.json").read_text())
     assert [r["rank"] for r in sk] == list(range(1, len(sk) + 1))
     assert all(sk[i]["score"] >= sk[i + 1]["score"] for i in range(len(sk) - 1))
     assert all(r["score"] == r["auto"] + r["driver"] for r in sk)
-    qualified = {int(t) for t in q["teams"]}
+    qualified = {int(t) for t, v in q["teams"].items() if any(r["status"] != "possible" for r in v["quals"])}
+    pending = {int(t) for t in q["teams"]} - qualified
     assert any(r["qualified"] for r in sk) and all(bool(r["qualified"]) == (r["id"] in qualified) for r in sk)
+    assert all(bool(r["pending"]) == (r["id"] in pending) for r in sk if not r["qualified"])
     plan = json.loads((out / "plan.json").read_text())
     ids = {e["id"] for e in plan["events"]}
     assert 90000 in ids and {95000 + k for k in range(12)} <= ids           # registered and calendar-only
@@ -156,32 +164,66 @@ def test_qualification_labels():
     s.calendar[8] = Event(8, "VE-V5-26-8", "Illinois State Championship (MS)", 0.0, 0.0, "Regional")
     s.awards.append(Award(5, "Excellence Award (V5)", ("VE-V5-26-9", "Event Region Championship",
                                                       "VE-V5-26-8", "JROTC National Championship"), (1,)))
-    got = [(r["target"], r["listed"]) for r in hub.qualifications(s)[1]]
-    assert got == [("Region championship (States)", True)]
+    got = [(r["target"], r["status"]) for r in hub.qualifications(s)[1]]
+    assert got == [("Region championship (States)", "listed")]
 
 
-def test_unlisted_qualifications():
-    """When an event lists no qualifications at all, its Excellence, Tournament
-    Champions and Skills Champion winners qualify the usual way (local event to
-    States, Signature to Worlds); an event that lists some is taken as written."""
-    from vexpredict import hub
-    from vexpredict.dataset import Award, Event, Season, Team
+def _rules_season():
+    from vexpredict.dataset import Award, Event, Season, SkillsResult, Team
     s = Season(name="x")
-    for t in range(1, 7):
+    for t in range(1, 13):
         s.teams[t] = Team(t, f"{t}A", grade="High School")
     s.events[1] = Event(1, "E1", "Local", 0.0, 0.0, "Other")
     s.events[2] = Event(2, "E2", "Sig", 1.0, 1.0, "Signature")
     s.events[3] = Event(3, "E3", "Listed", 2.0, 2.0, "Other")
     s.events[4] = Event(4, "E4", "Scrimmage", 3.0, 3.0, "Other")
-    s.awards += [Award(1, "Excellence Award (V5)", (), (1,)), Award(1, "Tournament Champions (V5)", (), (2,)),
-                 Award(1, "Design Award (V5)", (), (3,)), Award(2, "Robot Skills Champion (V5)", (), (4,)),
-                 Award(3, "Excellence Award (V5)", ("Event Region Championship",), (5,)),
-                 Award(3, "Tournament Champions (V5)", (), (6,)), Award(4, "Excellence Award (V5)", (), (3,))]
+    s.awards += [Award(1, "Excellence Award (V5)", (), (1,)), Award(1, "Tournament Champions (V5)", (), (1, 2)),
+                 Award(1, "Design Award (V5)", (), (3,)), Award(1, "Innovate Award (V5)", (), (4,)),
+                 Award(2, "Excellence Award (V5)", (), (5,)), Award(2, "Tournament Champions (V5)", (), (6, 1)),
+                 Award(2, "Design Award (V5)", (), (7,)), Award(2, "Robot Skills Champion (V5)", (), (8,)),
+                 Award(3, "Excellence Award (V5)", ("Event Region Championship",), (9,)),
+                 Award(3, "Tournament Champions (V5)", (), (10,)), Award(4, "Excellence Award (V5)", (), (11,))]
+    # skills at the local event: 1 (a winner), then 12, then 4; at the Signature: 8, 7
+    for team, ev, d, p in [(1, 1, 90, 40), (12, 1, 80, 30), (4, 1, 70, 20), (8, 2, 100, 50), (7, 2, 60, 10)]:
+        s.skills.append(SkillsResult(team, ev, 0.0, d, p))
+    return s
+
+
+def test_unlisted_qualifications():
+    """Events whose records list nothing follow the RECF rules: at a local
+    event Excellence and Tournament Champions are expected, Design and Skills
+    Champion are pending (they need a bigger spot allocation); at a Signature
+    Event only Excellence and Tournament Champions get Worlds spots. An event
+    that lists some qualifications is taken as written."""
+    from vexpredict import hub
+    q = hub.qualifications(_rules_season())
+    st = lambda t, g: hub.team_status(q.get(t, []), g)
+    S, W = hub.REGION, hub.WORLDS
+    assert st(1, S) == "expected" and st(2, S) == "expected" and st(3, S) == "possible"
+    assert not any(r["award"].startswith("Innovate") for r in q.get(4, []))
+    assert st(5, W) == "expected" and st(6, W) == "expected" and st(7, W) is None and st(8, W) is None
+    assert st(9, S) == "listed" and st(10, S) is None and st(11, S) is None
+
+
+def test_double_qualification_passes_down():
+    """Team 1 wins Excellence and Tournament Champions at the local event: its
+    second spot goes to the best skills team there that didn't win a
+    qualifying award (12, not 1). A States spot doesn't affect Worlds, so team
+    1 still takes its Signature spot; a team already holding a Worlds spot
+    frees its Signature spot for the skills list."""
+    from vexpredict import hub
+    q = hub.qualifications(_rules_season())
+    passed = [(t, r["status"]) for t, rs in q.items() for r in rs if r["award"] == hub.PASSED]
+    assert passed == [(12, "expected")]
+    assert hub.team_status(q[1], hub.WORLDS) == "expected"
+    # a team that already holds a Worlds spot frees its Signature spot for skills
+    s = _rules_season()
+    from vexpredict.dataset import Award, Event
+    s.events[0] = Event(0, "E0", "Earlier sig", -5.0, -5.0, "Signature")
+    s.awards.append(Award(0, "Excellence Award (V5)", (), (6,)))
     q = hub.qualifications(s)
-    assert q[1] == [{"target": "Region championship (States)", "award": "Excellence Award", "event_id": 1,
-                     "listed": False, "event": "Local", "date": "1970-01-01"}]
-    assert q[2][0]["target"] == "Region championship (States)" and q[4][0]["target"] == "World Championship"
-    assert q[5][0]["listed"] and 3 not in q and 6 not in q
+    got = [t for t, rs in q.items() for r in rs if r["award"] == hub.PASSED and r["target"] == hub.WORLDS]
+    assert got == [8]          # 6 was already in; 8 is the best skills team at the Signature not already in
 
 
 def test_schedule_luck():

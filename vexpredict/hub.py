@@ -3,8 +3,7 @@
   qualify.json  which High School teams have earned a spot at Worlds or their
                 region championship (States), from the official award records:
                 the qualifications an award lists, or, at events whose records
-                list none, the Excellence, Tournament Champions and Robot
-                Skills Champion awards that qualify at almost every event
+                list none, the RECF qualifying rules (see qualifications())
   skills.json   season skills standings (best single-event combined score)
                 with each team's qualification status, so "the best teams that
                 haven't qualified yet" is one filter away
@@ -36,9 +35,19 @@ def _r(x, nd=1):
 WORLDS = "World Championship"
 REGION = "Region championship (States)"
 
-# Awards that qualify a team at almost every event when the organizer hasn't
-# typed the qualification into the award record (most don't).
-QUALIFYING_AWARDS = ("excellence award", "tournament champions", "robot skills champion")
+# When an event's award records don't list qualifications (most don't), the
+# RECF rules decide. Local events and Region Championships give spots in this
+# order (V5RC spot allocation chart): Excellence 1, Tournament Champions 2,
+# Design 1, Robot Skills Champion 1, then Finalists and the judged awards. The
+# first three spots are the minimum allocation, so Excellence and Tournament
+# Champions are "expected"; Design and Skills Champion need an allocation of 4+
+# spots, which RECF sets by event size (for 2026-27, in January 2027), so they
+# are "possible". Signature Events: exactly three Worlds spots, Excellence and
+# Tournament Champions (2026-27 Signature Event guide), so those are expected.
+EXPECTED_AWARDS = ("excellence award", "tournament champions")
+POSSIBLE_AWARDS = ("design award", "robot skills champion")
+RANK = {"listed": 0, "expected": 1, "possible": 2}
+PASSED = "Skills spot (passed down)"
 
 
 def target_namer(season: Season) -> Callable[[str], str | None]:
@@ -75,47 +84,110 @@ def _middle_school(label: str) -> bool:
     return "(ms)" in low or "middle school" in low
 
 
-def _inferred_target(ev) -> str | None:
-    """Where an event's top awards usually send a team when the record says nothing."""
+def _rules(ev) -> tuple[str, tuple[str, ...]] | None:
+    """(championship, awards that can qualify) for an event whose records list nothing."""
     if ev is None or "scrimmage" in ev.name.lower():
         return None
     lvl = (ev.level or "").lower()
     if lvl in ("other", "spotlight", ""):
-        return REGION
-    if lvl in ("signature", "regional", "national"):
-        return WORLDS
+        return REGION, EXPECTED_AWARDS + POSSIBLE_AWARDS
+    if lvl == "signature":
+        return WORLDS, EXPECTED_AWARDS
+    if lvl in ("regional", "national"):
+        return WORLDS, EXPECTED_AWARDS + POSSIBLE_AWARDS
     return None
 
 
+def _event_skills(season: Season) -> dict[int, list[int]]:
+    """event -> High School teams by their skills score there (ties: autonomous, then driver)."""
+    best: dict[tuple[int, int], tuple[int, int, int]] = {}
+    for x in season.skills:
+        k = (x.event_id, x.team_id)
+        v = (x.combined, x.programming, x.driver)
+        if v > best.get(k, (-1, -1, -1)):
+            best[k] = v
+    out: dict[int, list[tuple]] = defaultdict(list)
+    for (eid, tid), v in best.items():
+        t = season.teams.get(tid)
+        if t and t.is_hs:
+            out[eid].append((v, tid))
+    return {eid: [tid for _, tid in sorted(rows, key=lambda r: (tuple(-x for x in r[0]), r[1]))] for eid, rows in out.items()}
+
+
 def qualifications(season: Season) -> dict[int, list[dict]]:
-    """team id -> the championships it has earned a spot at (High School teams
-    only). Each record says whether the award record lists the qualification
-    ("listed") or it is the event's usual qualifying award ("listed": False)."""
+    """team id -> the championships it has earned (or is in line for) a spot at,
+    High School teams only, in event order. Each record has a status:
+
+      listed    the award record lists the qualification
+      expected  the RECF rules give this award a spot at every event of its
+                kind (the event's records just don't say so)
+      possible  the award qualifies only if the event is allocated enough spots
+
+    Double qualifications follow the RECF rules: when a team wins a second
+    qualifying award, or already holds a spot, its spot passes to the next
+    High School team on that event's skills list that didn't win a qualifying
+    award there and doesn't already hold a spot ("Skills spot (passed down)")."""
     out: dict[int, list[dict]] = defaultdict(list)
     _target = target_namer(season)
-    listed_events = {a.event_id for a in season.awards if a.qualifications}
-    for a in sorted(season.awards, key=lambda a: season.events[a.event_id].start if a.event_id in season.events else 0):
-        ev = season.events.get(a.event_id)
-        if _middle_school(a.name):
-            continue
-        if a.qualifications:
-            targets = {_target(q) for q in a.qualifications} - {None}
-            listed = True
-        elif a.event_id not in listed_events and a.name.lower().startswith(QUALIFYING_AWARDS):
-            targets = {_inferred_target(ev)} - {None}
-            listed = False
-        else:
-            continue
-        for tid in a.team_ids:
-            t = season.teams.get(tid)
-            if not t or not t.is_hs:
+    skills_at = _event_skills(season)
+    by_event: dict[int, list] = defaultdict(list)
+    for a in season.awards:
+        if not _middle_school(a.name):
+            by_event[a.event_id].append(a)
+    held: dict[str, set[int]] = {REGION: set(), WORLDS: set()}   # teams with a listed or expected spot
+    order = sorted(by_event, key=lambda e: (season.events[e].start if e in season.events else 0, e))
+    for eid in order:
+        ev = season.events.get(eid)
+        awards = by_event[eid]
+        listed_here = any(a.qualifications for a in awards)
+        rules = None if listed_here else _rules(ev)
+        slots: dict[str, list[tuple[str, int, str]]] = defaultdict(list)   # target -> (award, team, status)
+        for a in awards:
+            low = a.name.lower()
+            if a.qualifications:
+                targets, status = {_target(q) for q in a.qualifications} - {None}, "listed"
+            elif rules and low.startswith(rules[1]):
+                targets, status = {rules[0]}, ("expected" if low.startswith(EXPECTED_AWARDS) else "possible")
+            else:
                 continue
-            for label in sorted(targets):
-                if any(r["target"] == label and r["event_id"] == a.event_id and r["award"] == a.name for r in out[tid]):
-                    continue
-                out[tid].append({"target": label, "award": a.name, "event_id": a.event_id, "listed": listed,
-                                 "event": ev.name if ev else "", "date": _iso(ev.start) if ev else ""})
+            for tid in a.team_ids:
+                t = season.teams.get(tid)
+                if t and t.is_hs:
+                    for tg in targets:
+                        slots[tg].append((a.name, tid, status))
+        for tg, sl in slots.items():
+            sl.sort(key=lambda x: RANK[x[2]])
+            winners = {tid for _, tid, _ in sl}
+            given: set[int] = set()
+            freed: list[str] = []
+            for award, tid, status in sl:
+                if tid in held[tg] or tid in given:
+                    freed.append(status)      # a double qualification: this spot passes down
+                else:
+                    given.add(tid)
+                    if status != "possible":
+                        held[tg].add(tid)
+                _add(out, tid, tg, award, status, ev, eid)
+            queue = [t for t in skills_at.get(eid, []) if t not in winners and t not in held[tg]]
+            for status, tid in zip(freed, queue):
+                _add(out, tid, tg, PASSED, status, ev, eid)
+                if status != "possible":
+                    held[tg].add(tid)
     return out
+
+
+def _add(out, tid, target, award, status, ev, eid) -> None:
+    if any(r["target"] == target and r["event_id"] == eid and r["award"] == award for r in out[tid]):
+        return
+    out[tid].append({"target": target, "award": award, "event_id": eid, "status": status,
+                     "listed": status == "listed", "event": ev.name if ev else "",
+                     "date": _iso(ev.start) if ev else ""})
+
+
+def team_status(recs: list[dict], target: str) -> str | None:
+    """A team's best status for one championship, or None."""
+    st = [r["status"] for r in recs if r["target"] == target]
+    return min(st, key=RANK.get) if st else None
 
 
 def best_skills(season: Season) -> dict[int, tuple[int, int, int, int]]:
@@ -132,17 +204,23 @@ def best_skills(season: Season) -> dict[int, tuple[int, int, int, int]]:
 def qualify_data(season: Season, now_ts: float) -> dict:
     quals = qualifications(season)
     counts: dict[str, int] = defaultdict(int)
+    pending: dict[str, int] = defaultdict(int)
     for recs in quals.values():
-        for t in {r["target"] for r in recs}:
-            counts[t] += 1
-    targets = [t for t in (REGION, WORLDS) if t in counts] or [REGION, WORLDS]
+        for t in (REGION, WORLDS):
+            st = team_status(recs, t)
+            if st in ("listed", "expected"):
+                counts[t] += 1
+            elif st == "possible":
+                pending[t] += 1
+    targets = [REGION, WORLDS]
     teams = {}
     for tid, recs in quals.items():
         tm = season.teams[tid]
         teams[str(tid)] = {"number": tm.number, "name": tm.name, "region": tm.region, "country": tm.country,
                            "quals": recs}
     awards_in = len({a.event_id for a in season.awards})
-    return {"targets": [{"name": t, "teams": counts.get(t, 0)} for t in targets], "teams": teams,
+    return {"targets": [{"name": t, "teams": counts.get(t, 0), "pending": pending.get(t, 0)} for t in targets],
+            "teams": teams,
             "events_with_awards": awards_in, "updated": _iso(now_ts)}
 
 
@@ -157,7 +235,8 @@ def skills_data(season: Season) -> list[dict]:
         rows.append({"id": tid, "number": tm.number, "name": tm.name, "region": tm.region, "country": tm.country,
                      "score": combined, "auto": prog, "driver": drv, "event_id": eid,
                      "event": ev.name if ev else "", "date": _iso(ev.start) if ev else "",
-                     "qualified": sorted({q["target"] for q in quals.get(tid, [])})})
+                     "qualified": [t for t in (REGION, WORLDS) if team_status(quals.get(tid, []), t) in ("listed", "expected")],
+                     "pending": [t for t in (REGION, WORLDS) if team_status(quals.get(tid, []), t) == "possible"]})
     rows.sort(key=lambda r: (-r["score"], -r["auto"], -r["driver"], r["number"]))
     for i, r in enumerate(rows, 1):
         r["rank"] = i

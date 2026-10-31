@@ -99,7 +99,8 @@ def test_every_page_renders_without_errors(server):
         page.click("#qtabs a[data-t='Region championship (States)']")
         page.select_option("#qr", "")
         page.wait_for_timeout(100)
-        assert page.locator("#qbody table").count() == 2
+        tables = page.locator("#qbody table").count()
+        assert tables == 2 + ("Pending spot counts" in page.inner_text("#qbody"))
         # skills: the "without a spot" filter drops every qualified team
         page.goto(url + "#/skills")
         page.wait_for_timeout(250)

@@ -154,7 +154,7 @@ async function home() {
     get(`${SEASON}/qualify.json`).catch(() => null), get(`${SEASON}/skills.json`).catch(() => null)]);
   const board = boardAll.slice(0, 10);
   const soon = META.events.filter(e => { const d = Date.parse(e.date) - Date.now(); return e.status === "upcoming" && !e.league && d > -864e5 && d < 30 * 864e5; }).length;
-  const qTeams = q ? Object.keys(q.teams).length : 0;
+  const qTeams = q ? Object.values(q.teams).filter(t => ["Region championship (States)", "World Championship"].some(g => isQualified(t.quals, g))).length : 0;
   const tools = [
     ["#/events", "Predict", "Win odds for every match, ranking forecasts, match briefs and a live pick list.", `${META.events.filter(e => e.status === "live" && !e.league).length} tournaments live now`],
     ["#/qualify", "Qualify", "Who has earned a spot at States or Worlds, and who's next in line on skills.", q ? (qTeams ? `${qTeams} teams qualified so far` : "Fills in as events post awards") : ""],
@@ -449,7 +449,11 @@ async function teamPage(id) {
   const quals = q?.teams[id]?.quals || [];
   const skRow = sk?.find(x => x.id === id);
   const skRegion = skRow ? sk.filter(x => regionOf(x) === regionOf(skRow)).findIndex(x => x.id === id) + 1 : 0;
-  const season = `${quals.length ? `<p class="callout good"><b>Qualified:</b> ${quals.map(z => `${esc(z.target)} (${esc(z.award)} at <a href="#/event/${z.event_id}">${esc(z.event)}</a>)`).join("; ")}</p>` : ""}
+  const qLine = zs => zs.map(z => `${esc(z.target)} (${esc(z.award)} at <a href="#/event/${z.event_id}">${esc(z.event)}</a>)`).join("; ");
+  const qGot = quals.filter(z => isQualified(quals, z.target) && (z.status || "listed") !== "possible");
+  const qPend = quals.filter(z => !isQualified(quals, z.target) && z.status === "possible");
+  const season = `${qGot.length ? `<p class="callout good"><b>Qualified:</b> ${qLine(qGot)}</p>` : ""}
+    ${qPend.length ? `<p class="callout"><b>Pending:</b> ${qLine(qPend)}. This award qualifies only if the event gets enough spots, which RECF sets in January.</p>` : ""}
     ${skRow ? `<p class="muted">Skills: <b>${skRow.score}</b> (auto ${skRow.auto}, driver ${skRow.driver}) at <a href="#/event/${skRow.event_id}">${esc(skRow.event)}</a>. #${skRow.rank} in the world, #${skRegion} in ${esc(regionOf(skRow))}. <a href="#/skills">Skills standings</a></p>` : ""}`;
   NUMBERS[id] = t.number;
   const me = myTeam() === id;
@@ -626,6 +630,13 @@ async function myRegion() {
 }
 
 // ---------- qualification tracker ----------
+// a team's best status for one championship: listed / expected / possible (pending)
+const Q_RANK = { listed: 0, expected: 1, possible: 2 };
+const qStatus = (quals, t) => (quals || []).filter(z => z.target === t).map(z => z.status || (z.listed === false ? "expected" : "listed"))
+  .sort((a, b) => Q_RANK[a] - Q_RANK[b])[0] || null;
+const isQualified = (quals, t) => ["listed", "expected"].includes(qStatus(quals, t));
+const Q_NOTE = { expected: "The event's records don't list qualifications; under the RECF rules this award gets a spot at every event of its kind",
+  possible: "Qualifies only if the event is allocated enough spots; RECF sets 2026-27 spot counts in January 2027" };
 const Q_TARGETS = [["Region championship (States)", "States"], ["World Championship", "Worlds"]];
 async function qualifyPage() {
   setTitle("Qualification");
@@ -637,22 +648,27 @@ async function qualifyPage() {
   for (const r of rowsAll) NUMBERS[r.id] = r.number;
   for (const r of sk) NUMBERS[r.id] = r.number;
   const count = k => q.targets.find(x => x.name === k)?.teams || 0;
-  const how = z => `${esc(z.award)}${z.listed === false ? `<sup class="star" title="Usual qualifying award; the event's record doesn't list it">*</sup>` : ""} · <a href="#/event/${z.event_id}">${esc(z.event)}</a>`;
+  const how = z => `${esc(z.award)}${z.status === "expected" ? `<sup class="star" title="${esc(Q_NOTE.expected)}">*</sup>` : ""} · <a href="#/event/${z.event_id}">${esc(z.event)}</a>`;
   const draw = () => {
     const t = state.target, r = state.region, short = Q_TARGETS.find(([k]) => k === t)[1];
     for (const a of document.querySelectorAll("#qtabs a")) a.setAttribute("aria-current", a.dataset.t === t ? "page" : "false");
     const inR = x => !r || regionOf(x) === r;
-    const qualified = rowsAll.filter(x => inR(x) && x.quals.some(z => z.target === t))
-      .map(x => ({ ...x, mine: x.quals.filter(z => z.target === t) }))
+    const qualified = rowsAll.filter(x => inR(x) && isQualified(x.quals, t))
+      .map(x => ({ ...x, mine: x.quals.filter(z => z.target === t && z.status !== "possible") }))
       .sort((a, b) => a.mine[0].date.localeCompare(b.mine[0].date) || a.number.localeCompare(b.number));
     const doubles = qualified.filter(x => new Set(x.mine.map(z => `${z.event_id}:${z.award}`)).size > 1);
-    const qset = new Set(rowsAll.filter(x => x.quals.some(z => z.target === t)).map(x => x.id));
+    const pendingRows = rowsAll.filter(x => inR(x) && qStatus(x.quals, t) === "possible")
+      .map(x => ({ ...x, mine: x.quals.filter(z => z.target === t) }))
+      .sort((a, b) => a.mine[0].date.localeCompare(b.mine[0].date) || a.number.localeCompare(b.number));
+    const qset = new Set(rowsAll.filter(x => qStatus(x.quals, t)).map(x => x.id));
     const next = sk.filter(x => inR(x) && !qset.has(x.id));
-    const anyStar = qualified.some(x => x.mine.some(z => z.listed === false));
+    const anyStar = qualified.some(x => x.mine.some(z => z.status === "expected"));
     const mine = me ? (() => {
       const meQ = rowsAll.find(x => x.id === me);
-      const hit = meQ?.quals.filter(z => z.target === t) || [];
-      if (hit.length) return `<p class="callout good"><b>${esc(num(me))} is qualified for ${short}</b> · ${hit.map(how).join("; ")}</p>`;
+      const hit = (meQ?.quals || []).filter(z => z.target === t);
+      const st = qStatus(meQ?.quals, t);
+      if (st && st !== "possible") return `<p class="callout good"><b>${esc(num(me))} is qualified for ${short}</b> · ${hit.filter(z => z.status !== "possible").map(how).join("; ")}</p>`;
+      if (st === "possible") return `<p class="callout"><b>${esc(num(me))}: pending for ${short}</b> · ${hit.map(how).join("; ")}. This counts if the event gets enough spots, which RECF sets in January.</p>`;
       const meSk = sk.find(x => x.id === me);
       if (!meSk) return `<p class="callout">${esc(num(me))} isn't qualified for ${short} yet and has no skills score posted.</p>`;
       const pos = sk.filter(x => regionOf(x) === regionOf(meSk) && !qset.has(x.id)).findIndex(x => x.id === me) + 1;
@@ -661,21 +677,28 @@ async function qualifyPage() {
     $("#qbody").innerHTML = `${mine}
       <div class="stats">
         <div class="stat"><b>${qualified.length}</b><span>${r ? esc(r) + " teams" : "Teams"} qualified</span></div>
+        <div class="stat"><b>${pendingRows.length}</b><span>Pending spot counts</span></div>
         <div class="stat"><b>${doubles.length}</b><span>Double-qualified (extra spots pass down)</span></div>
       </div>
       <h2>Qualified for ${short}</h2>
       ${qualified.length ? `<div class="panel tablewrap"><table class="qtable"><thead><tr><th>Team</th><th>How</th><th class="n">Date</th></tr></thead><tbody>
         ${qualified.map(x => `<tr class="${me === x.id ? "mine" : ""}"><td class="t">${teamLink(x.id)}<span class="subnote">${esc(regionOf(x))}</span></td>
           <td class="how">${x.mine.map(how).join("<br>")}</td><td class="n">${new Date(x.mine[0].date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</td></tr>`).join("")}
-      </tbody></table></div>${anyStar ? `<p class="muted small"><sup class="star">*</sup> The event hasn't marked which awards qualify, so these are its Excellence, Tournament Champions and Robot Skills Champion winners, the awards that qualify at almost every event.</p>` : ""}`
+      </tbody></table></div>${anyStar ? `<p class="muted small"><sup class="star">*</sup> The event's records don't list which awards qualify. Under the RECF rules ${t.startsWith("World") ? "a Signature Event's Excellence and Tournament Champions" : "an event's Excellence and Tournament Champions"} always get spots, and a double qualification passes to the next team on that event's skills list.</p>` : ""}`
       : `<p class="empty">Nobody${r ? " in " + esc(r) : ""} has qualified for ${short} yet.</p>`}
+      ${pendingRows.length ? `<h2>Pending spot counts</h2>
+      <p class="muted">These awards qualify only if the event is allocated enough spots. Design and Robot Skills Champion come after Excellence and Tournament Champions in the RECF order, and RECF sets this season's spot counts by event size in January 2027.</p>
+      <div class="panel tablewrap"><table class="qtable"><thead><tr><th>Team</th><th>How</th><th class="n">Date</th></tr></thead><tbody>
+        ${pendingRows.map(x => `<tr class="${me === x.id ? "mine" : ""}"><td class="t">${teamLink(x.id)}<span class="subnote">${esc(regionOf(x))}</span></td>
+          <td class="how">${x.mine.map(how).join("<br>")}</td><td class="n">${new Date(x.mine[0].date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</td></tr>`).join("")}
+      </tbody></table></div>` : ""}
       <h2>Next in line on skills</h2>
-      <p class="muted">${r ? esc(r) + " teams" : "Teams"} without a ${short} spot, by best skills score. Leftover and passed-down spots usually go down this list.</p>
+      <p class="muted">${r ? esc(r) + " teams" : "Teams"} without a ${short} spot or a pending one, by best skills score. Leftover and passed-down spots usually go down this list.</p>
       ${next.length ? `<div class="panel tablewrap"><table><thead><tr><th class="n">#</th><th>Team</th><th class="n">Skills</th><th class="n">Auto</th><th class="n">Driver</th><th class="n hide-m">World</th></tr></thead><tbody>
         ${next.slice(0, 25).map((x, i) => `<tr class="${me === x.id ? "mine" : ""}"><td class="n">${i + 1}</td><td class="t">${teamLink(x.id)}<span class="subnote">${esc(regionOf(x))}</span></td>
           <td class="n"><b>${x.score}</b></td><td class="n">${x.auto}</td><td class="n">${x.driver}</td><td class="n hide-m">#${x.rank}</td></tr>`).join("")}
       </tbody></table></div>` : `<p class="empty">No skills scores posted${r ? " in " + esc(r) : ""} yet.</p>`}
-      <p class="muted small">From official award results at ${q.events_with_awards} events, updated ${esc(q.updated)}. Spot counts per region aren't published, so no cut-off is guessed.</p>`;
+      <p class="muted small">From official award results at ${q.events_with_awards} events, updated ${esc(q.updated)}. Where an event's records list qualifications, they're taken as written. Teams from outside an event's region aren't checked, and no cut-off is guessed.</p>`;
   };
   app.innerHTML = `<h1>Who has qualified?</h1>
     <nav class="tabs" id="qtabs" aria-label="Championship">${Q_TARGETS.map(([k, l]) => `<a href="#/qualify" data-t="${esc(k)}">${l} <span class="tabcount">${count(k)}</span></a>`).join("")}</nav>
@@ -709,7 +732,7 @@ async function skillsPage() {
     $("#sbody").innerHTML = `${meRow ? `<p class="callout">${esc(num(me))}: <b>${meRow.score}</b> (auto ${meRow.auto}, driver ${meRow.driver}), <b>#${meRow.pos}</b> on this list and #${meRow.rank} in the world.</p>` : ""}
       ${shown.length ? `<div class="panel tablewrap"><table><thead><tr><th class="n">#</th><th>Team</th><th class="n">Score</th><th class="n">Auto</th><th class="n">Driver</th><th class="hide-m">Where</th><th class="n hide-m">World</th></tr></thead><tbody>
         ${shown.slice(0, state.shown).map(x => `<tr class="${me === x.id ? "mine" : ""}"><td class="n">${x.pos}</td>
-          <td class="t">${teamLink(x.id)}${x.qualified.length ? ` <span class="pill good" title="${esc(x.qualified.join(", "))}">Qualified</span>` : ""}<span class="subnote">${esc(regionOf(x))}</span></td>
+          <td class="t">${teamLink(x.id)}${x.qualified.length ? ` <span class="pill good" title="${esc(x.qualified.join(", "))}">Qualified</span>` : (x.pending || []).length ? ` <span class="pill" title="${esc(Q_NOTE.possible)}">Pending</span>` : ""}<span class="subnote">${esc(regionOf(x))}</span></td>
           <td class="n"><b>${x.score}</b></td><td class="n">${x.auto}</td><td class="n">${x.driver}</td>
           <td class="hide-m"><a href="#/event/${x.event_id}">${esc(x.event)}</a></td><td class="n hide-m">#${x.rank}</td></tr>`).join("")}
       </tbody></table></div>${shown.length > state.shown ? `<p><button id="smore">Show 100 more</button></p>` : ""}`
