@@ -148,14 +148,13 @@ season it also runs the backtest and simulator check and commits `reports/<seaso
 Run it from **Actions → Backtest → Run workflow** (season name, and whether to run the backtest).
 The token lives in the repository secret `VEX_TOKEN`, which is already set.
 
-## Going live at stats.2360arachnid.com
+## Live at [stats.2360arachnid.com](https://stats.2360arachnid.com)
 
-1. Make the repo public (free GitHub Pages needs it), then **Settings → Pages → Source: GitHub Actions**.
-2. The `schedule:` block in `.github/workflows/update.yml` is on.
-3. DNS: add a `CNAME` record `stats` pointing to `s1g6r.github.io` (`site/CNAME` already says `stats.2360arachnid.com`).
-4. Run **Actions → Update predictions → Run workflow** once.
+Served by GitHub Pages from the **Update predictions** workflow. DNS is a
+`CNAME` record `stats` pointing to `s1g6r.github.io` on Cloudflare (DNS only,
+grey cloud, so GitHub issues the HTTPS certificate). HTTPS is enforced.
 
-After that, the site re-pulls Override and republishes every 10 minutes from
+The site re-pulls Override and republishes every 10 minutes from
 Friday to Sunday (tournament days) and daily otherwise. It uses the settings the
 Push Back backtest tuned.
 
