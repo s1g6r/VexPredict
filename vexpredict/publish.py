@@ -62,7 +62,8 @@ def build_model(season: Season, slug: str, tune_from: str | None = None) -> tupl
     differently."""
     params, temp, src, name = tuned_settings(slug, tune_from)
     if params:
-        source = "tuned by backtest" if src == slug else f"tuned by the {src} backtest"
+        nice = src.replace("-", " ").title()
+        source = "tuned by this season's backtest" if src == slug else f"tuned on {nice}, the last full season"
         if src != slug and season.matches:
             a, b, _, n = fit_skills_map(season, season.matches[-1].ts + 1)
             if n >= 200:

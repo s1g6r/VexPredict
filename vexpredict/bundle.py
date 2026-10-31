@@ -50,7 +50,8 @@ def build(out: Path, data_dir: Path | None = None, seasons: list[str] | None = N
     boot = f"window.__VP_CHUNKS = {json.dumps(names)};"
     if demo_me:
         boot += f" window.__VP_DEMO_ME = {int(demo_me)};"
-    page = (f"<title>{title}</title>\n"
+    page = ('<meta charset="utf-8">\n'
+            f"<title>{title}</title>\n"
             '<meta name="claude:viewport-fit-sides" content="cover">\n'
             f"{head_links}\n<style>\n{(SITE / 'style.css').read_text()}\n</style>\n{body}\n"
             f"<script>{boot}</script>\n<script>\n{(SITE / 'app.js').read_text()}\n</script>\n")

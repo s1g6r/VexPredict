@@ -38,6 +38,7 @@ const myTeam = () => store.get(`${SEASON}:me`, window.__VP_DEMO_ME ?? null);
 const notes = () => store.get(`${SEASON}:notes`, {});
 function saveNote(id, note) { const n = notes(); if (!note.text && !note.tags.length) delete n[id]; else n[id] = note; store.set(`${SEASON}:notes`, n); }
 const pct = p => `${Math.round(p * 100)}%`;
+const f2 = x => (Math.abs(x) < 0.005 ? 0 : x).toFixed(2);
 const rnd = x => (x == null ? "–" : Math.round(x));
 const num = id => NUMBERS[id] || id;
 const teamLink = (id, extra = "") => `<a href="#/team/${id}" class="${myTeam() === id ? "me" : ""}" ${extra}>${esc(num(id))}</a>`;
@@ -303,12 +304,12 @@ function forecastTab(el, ev, teams) {
     if (actualTop.length) hits = `<p class="callout">${overlap} of the ${k} teams we picked to finish top ${k} before the event actually did.</p>`;
   }
   el.innerHTML = `
-    <p class="lede">${live ? "The rest of qualifications, simulated" : "Qualifications simulated before the first match"} 1,500 times with each team's rating, the schedule${!ev.matches.length && !ev.pending.length ? " (random schedules until the real one is out)" : ""}, and V5RC ranking rules: win points, autonomous points, then strength of schedule. Top ${sim.captains} become alliance captains.</p>
+    <p class="lede">${live && ev.matches.length ? "The rest of qualifications, simulated" : "Qualifications simulated before the first match"} 1,500 times with each team's rating, the schedule${!ev.matches.length && !ev.pending.length ? " (random schedules until the real one is out)" : ""}, and V5RC ranking rules: win points, autonomous points, then strength of schedule. Top ${sim.captains} become alliance captains.</p>
     ${hits}
-    <div class="panel tablewrap"><table><thead><tr><th>Team</th>${(ev.matches.length || ev.pending.length) ? `<th class="n">${done ? "Final" : "Now"}</th><th class="n hide-m">Record</th>` : ""}
+    <div class="panel tablewrap"><table><thead><tr><th>Team</th>${ev.matches.length ? `<th class="n">${done ? "Final" : "Now"}</th><th class="n hide-m">Record</th>` : ""}
       <th class="n hide-m">Rating</th><th class="n">Expected</th><th>Captain odds</th><th class="n hide-m">Rank 1</th></tr></thead><tbody>
       ${rows.map(r => `<tr class="${myTeam() === r.id ? "mine" : ""}"><td class="t">${teamLink(r.id)}</td>
-        ${(ev.matches.length || ev.pending.length) ? `<td class="n">${r.t.rank ?? "–"}</td><td class="n hide-m">${r.t.record ?? "–"}</td>` : ""}
+        ${ev.matches.length ? `<td class="n">${r.t.rank ?? "–"}</td><td class="n hide-m">${r.t.record ?? "–"}</td>` : ""}
         <td class="n hide-m">${rnd(live || !done ? r.t.rating_now : r.t.rating_pre)}</td><td class="n">${r.mean_rank.toFixed(1)}</td>
         <td style="white-space:nowrap"><span class="meter"><i style="width:${r.p_captain * 100}%"></i></span>${pct(r.p_captain)}</td><td class="n hide-m">${pct(r.p_first)}</td></tr>`).join("")}
     </tbody></table></div>`;
@@ -542,13 +543,16 @@ async function accuracy() {
   if (acc.simcheck) {
     const c = acc.simcheck.cut_0, h = acc.simcheck.cut_50;
     html += `<h2>Ranking forecasts</h2><div class="panel tablewrap"><table><thead><tr><th>When</th><th class="n">Simulator</th><th class="n">Current standings</th></tr></thead><tbody>
-      ${c?.divisions ? `<tr><td>Before the first match</td><td class="n">${c.spearman_sim.toFixed(2)}</td><td class="n">${c.spearman_standings.toFixed(2)}</td></tr>` : ""}
-      ${h?.divisions ? `<tr><td>Halfway through quals</td><td class="n">${h.spearman_sim.toFixed(2)}</td><td class="n">${h.spearman_standings.toFixed(2)}</td></tr>` : ""}
+      ${c?.divisions ? `<tr><td>Before the first match</td><td class="n">${f2(c.spearman_sim)}</td><td class="n">${f2(c.spearman_standings)}</td></tr>` : ""}
+      ${h?.divisions ? `<tr><td>Halfway through quals</td><td class="n">${f2(h.spearman_sim)}</td><td class="n">${f2(h.spearman_standings)}</td></tr>` : ""}
       </tbody></table><p class="muted">Rank correlation between predicted and actual final rankings: 1 is a perfect order, 0 is no better than random.</p></div>`;
   }
   html += `<h2>How the rating works</h2><div class="panel"><p>Each team has one number: the points it adds to its alliance in an average match. Before a match, the two partners' numbers are added up to predict each alliance's score. Afterwards, each team's number moves toward what actually happened. It moves a lot for new teams and less as a team plays more, and one freak result can only move it so far.</p>
     <p>Skills runs are solo, so they show what a robot can do on its own. A team's published skills scores set its starting rating and pull its rating toward them at the start of each new event. That matters most early in the season, when teams have played few matches.</p>
-    <p>How much a match moves a rating depends on the time of season. Early on, alliances mostly score on their own, so a team is judged by its alliance's score. Once fields get strong, scoring is contested and defense matters, so the winning margin says more. Several versions of the rating run side by side, from "own score" to "margin", and each prediction leans on whichever has been predicting recent matches best. That uses only matches already played.${META.model.weights_now ? ` Right now: ${Object.entries(META.model.weights_now).filter(([, w]) => w >= 0.01).sort((a, b) => b[1] - a[1]).map(([k, w]) => `${pct(w)} ${+k === 0 ? "own score" : +k === 1 ? "margin" : `${pct(+k)} margin`}`).join(", ")}.` : ""}</p>
+    <p>How much a match moves a rating depends on the time of season. Early on, alliances mostly score on their own, so a team is judged by its alliance's score. Once fields get strong, scoring is contested and defense matters, so the winning margin says more. Several versions of the rating run side by side, from "own score" to "margin", and each prediction leans on whichever has been predicting recent matches best. That uses only matches already played.${META.model.weights_now ? (() => {
+      const lean = Object.entries(META.model.weights_now).reduce((a, [k, w]) => a + (+k) * w, 0);
+      return ` Right now it leans ${pct(lean)} of the way from own score to margin.`;
+    })() : ""}</p>
     <p>Model settings: ${esc(META.model.source)}.</p></div>`;
   app.innerHTML = html;
 }
