@@ -203,7 +203,7 @@ class _MixRatings:
         return t in self.mix.subs[0].e
 
     def __getitem__(self, t) -> float:
-        return float(sum(w * (s.e[t] + s.bias / 2) for w, s in zip(self.mix.w, self.mix.subs)))
+        return float(sum(w * (s.e[t] + s.bias / 2) for w, s in zip(self.mix.w, self.mix.subs))) + self.mix.level
 
     def get(self, t, default=None):
         return self[t] if t in self else default
@@ -264,6 +264,11 @@ class EPAMix(Model):
         self.decay = 0.5 ** (1 / self.half_life)
         self.w = np.full(len(self.subs), 1 / len(self.subs))
         self._cache: tuple[int, list[Pred]] | None = None
+        # Scores: the total comes from the own-score version (best at absolute
+        # scores), the margin from the mix (best at who wins). `level` is the
+        # per-team offset that puts the mixed ratings on that scoring level.
+        self.own = int(np.argmin(self.margin_ws))
+        self.level = 0.0
 
     # the parts of the EPA interface that publishing uses
     @property
@@ -290,14 +295,16 @@ class EPAMix(Model):
         return self.e.get(team)
 
     def _initial(self, team: int, m) -> float:
-        return float(sum(w * (s._initial(team, m) + s.bias / 2) for w, s in zip(self.w, self.subs)))
+        return float(sum(w * (s._initial(team, m) + s.bias / 2) for w, s in zip(self.w, self.subs))) + self.level
 
     def _combine(self, prs: list[Pred]) -> Pred:
         p = float(np.dot(self.w, [x.p_red for x in prs]))
         if self.temp != 1.0:
             p = min(max(p, 1e-9), 1 - 1e-9)
             p = sigmoid(math.log(p / (1 - p)) / self.temp)
-        return Pred(p, float(np.dot(self.w, [x.red for x in prs])), float(np.dot(self.w, [x.blue for x in prs])))
+        margin = float(np.dot(self.w, [x.red - x.blue for x in prs]))
+        total = prs[self.own].red + prs[self.own].blue
+        return Pred(p, (total + margin) / 2, (total - margin) / 2)
 
     def predict(self, m: Match) -> Pred:
         prs = [s.predict(m) for s in self.subs]
@@ -309,6 +316,8 @@ class EPAMix(Model):
 
     def update(self, m: Match) -> None:
         prs = self._cache[1] if self._cache and self._cache[0] == m.idx else [s.predict(m) for s in self.subs]
+        mixed_total = float(np.dot(self.w, [x.red + x.blue for x in prs]))
+        self.level += 0.01 * ((prs[self.own].red + prs[self.own].blue - mixed_total) / 4 - self.level)
         o = m.outcome
         for i, pr in enumerate(prs):
             q = min(max(pr.p_red, 1e-6), 1 - 1e-6)
