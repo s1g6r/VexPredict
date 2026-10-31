@@ -140,4 +140,4 @@ def test_hub_files(published):
     up = next(e for e in plan["events"] if e["id"] == 90000)
     assert up["hs"] == len(up["teams"]) and up["ratings"] == sorted(up["ratings"], reverse=True)
     assert "hs" not in next(e for e in plan["events"] if e["id"] == 95000)   # no team list yet
-    assert plan["team_loc"] and all(len(v) == 2 for v in plan["team_loc"].values())
+    assert plan["team_loc"] and all(len(v) == 3 for v in plan["team_loc"].values())

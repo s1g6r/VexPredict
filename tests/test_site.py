@@ -42,7 +42,7 @@ def test_every_page_renders_without_errors(server):
     num_me = next(t["number"] for t in ev["teams"] if t["id"] == me)
     pages = ["#/", "#/events", "#/leaderboard", "#/accuracy", "#/event/50040/matches", "#/event/50040/forecast",
              "#/event/50040/picks", "#/event/50040/teams", "#/event/50040/brief", "#/event/90000/forecast",
-             "#/event/50000/forecast", f"#/team/{me}", "#/events?s=league", "#/nope"]
+             "#/event/50000/forecast", f"#/team/{me}", "#/events?s=league", "#/qualify", "#/skills", "#/plan", "#/nope"]
     with pw.sync_playwright() as p:
         b = p.chromium.launch()
         ctx = b.new_context(viewport={"width": 390, "height": 844})
@@ -82,6 +82,30 @@ def test_every_page_renders_without_errors(server):
         sel = page.locator("#div")
         sel.select_option(mine)
         page.wait_for_timeout(200)
+        # qualification: a championship is listed with qualified teams and teams next in line
+        page.goto(url + "#/qualify")
+        page.wait_for_timeout(250)
+        main = page.inner_text("main")
+        assert "Qualified" in main and "Best skills without a spot" in main
+        page.select_option("#qr", "")
+        page.wait_for_timeout(100)
+        assert page.locator("#qbody table").count() == 2
+        # skills: the "without a spot" filter drops every qualified team
+        page.goto(url + "#/skills")
+        page.wait_for_timeout(250)
+        page.select_option("#sr", "")
+        assert page.locator("#sbody .pill.good").count() > 0
+        page.check("#so")
+        page.wait_for_timeout(100)
+        assert page.locator("#sbody .pill.good").count() == 0 and page.locator("#sbody tbody tr").count() > 0
+        # planner: with my team set, events show distances and my place in each field
+        page.goto(url + "#/plan")
+        page.wait_for_timeout(250)
+        page.select_option("#pd", "0")
+        page.select_option("#pw", "0")
+        page.wait_for_timeout(100)
+        assert "Away" in page.inner_text("#pbody") and page.locator("#pbody tbody tr").count() >= 12
+        assert any(c.startswith("#") for c in page.locator("#pbody tbody td:last-child").all_inner_texts())
         # home shows the next match for my team
         page.goto(url + "#/")
         page.wait_for_timeout(200)

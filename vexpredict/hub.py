@@ -118,7 +118,8 @@ def plan_data(season: Season, rating: Callable[[int], float | None], now_ts: flo
                        top8=_r(sum(r for r, _ in rated[:8]) / min(8, len(rated))) if rated else None)
         events.append(rec)
     events.sort(key=lambda e: (e["date"], e["name"]))
-    loc = {str(t.id): [_r(t.lat, 2), _r(t.lon, 2)] for t in season.teams.values()
+    # [lat, lon, 1 if the team is in the US (the planner shows miles there)]
+    loc = {str(t.id): [_r(t.lat, 2), _r(t.lon, 2), int(t.country == "United States")] for t in season.teams.values()
            if t.is_hs and t.lat is not None and t.lon is not None}
     return {"events": events, "team_loc": loc, "updated": _iso(now_ts)}
 

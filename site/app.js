@@ -106,6 +106,9 @@ async function route() {
     else if (page === "leaderboard") await leaderboard();
     else if (page === "events") await eventsPage();
     else if (page === "accuracy") await accuracy();
+    else if (page === "qualify") await qualifyPage();
+    else if (page === "skills") await skillsPage();
+    else if (page === "plan") await planPage();
     else app.innerHTML = `<p>That page doesn't exist. <a href="#/">Go to the home page</a>.</p>`;
   } catch (e) {
     console.error(e);
@@ -147,7 +150,18 @@ async function home() {
   const live = liveAll.filter(e => !e.league), leagues = liveAll.length - live.length;
   const today = new Date().toISOString().slice(0, 10);
   const upcoming = META.events.filter(e => e.status === "upcoming" && e.date >= today).reverse().slice(0, 5);
-  const board = (await get(`${SEASON}/leaderboard.json`)).slice(0, 10);
+  const [boardAll, q, sk, plan] = await Promise.all([get(`${SEASON}/leaderboard.json`),
+    get(`${SEASON}/qualify.json`).catch(() => null), get(`${SEASON}/skills.json`).catch(() => null),
+    get(`${SEASON}/plan.json`).catch(() => null)]);
+  const board = boardAll.slice(0, 10);
+  const soon = plan ? plan.events.filter(e => { const d = Date.parse(e.date) - Date.now(); return !e.league && d > -864e5 && d < 30 * 864e5; }).length : 0;
+  const qTeams = q ? Object.keys(q.teams).length : 0;
+  const tools = [
+    ["#/events", "Predict", "Win odds for every match, ranking forecasts, match briefs and a live pick list.", `${META.events.filter(e => e.status === "live").length} events live now`],
+    ["#/qualify", "Qualify", "Who has earned a spot at States or Worlds, and who's next in line on skills.", q ? (qTeams ? `${qTeams} teams qualified so far` : "Fills in as events post awards") : ""],
+    ["#/skills", "Skills", "Season skills standings by region, with a filter for teams still without a spot.", sk && sk.length ? `Top score: ${sk[0].score} (${esc(sk[0].number)})` : ""],
+    ["#/plan", "Plan", "Upcoming events near you, how strong each field is, and where you'd rank.", plan ? `${soon} events in the next 30 days` : ""],
+  ].filter(t => t[3] !== "" || t[0] === "#/events");
   let next = "";
   const me = myTeam();
   if (me) {
@@ -166,8 +180,9 @@ async function home() {
     }
   }
   app.innerHTML = `
-    <h1>Who wins, by how much, and who to pick</h1>
-    <p class="lede">Predictions for VEX V5RC High School. Every match gets a win probability before it's played, every event gets a ranking forecast, and the accuracy is published.</p>
+    <h1>Everything for your VEX season</h1>
+    <p class="lede">Free tools for VEX V5RC High School: match predictions with published accuracy, qualification tracking, skills standings and an event planner. No accounts, no logins.</p>
+    <div class="tools">${tools.map(([href, name, blurb, stat]) => `<a class="tool" href="${href}"><h2>${name}</h2><p>${blurb}</p>${stat ? `<span class="stat-line">${stat}</span>` : ""}</a>`).join("")}</div>
     ${next}
     ${live.length ? `<h2>Live now</h2><ul class="list panel">${live.map(evItem).join("")}</ul>` : ""}
     ${leagues ? `<p><a href="#/events?s=league">${leagues} league${leagues === 1 ? "" : "s"} in progress</a> (leagues play over several weeks)</p>` : ""}
@@ -407,8 +422,14 @@ function picksTab(el, ev, teams) {
 
 // ---------- team ----------
 async function teamPage(id) {
-  const t = await get(`${SEASON}/teams/${id}.json`);
+  const [t, q, sk] = await Promise.all([get(`${SEASON}/teams/${id}.json`),
+    get(`${SEASON}/qualify.json`).catch(() => null), get(`${SEASON}/skills.json`).catch(() => null)]);
   setTitle(t.number);
+  const quals = q?.teams[id]?.quals || [];
+  const skRow = sk?.find(x => x.id === id);
+  const skRegion = skRow ? sk.filter(x => regionOf(x) === regionOf(skRow)).findIndex(x => x.id === id) + 1 : 0;
+  const season = `${quals.length ? `<p class="callout good"><b>Qualified:</b> ${quals.map(z => `${esc(z.target)} (${esc(z.award)} at <a href="#/event/${z.event_id}">${esc(z.event)}</a>)`).join("; ")}</p>` : ""}
+    ${skRow ? `<p class="muted">Skills: <b>${skRow.score}</b> (auto ${skRow.auto}, driver ${skRow.driver}) at <a href="#/event/${skRow.event_id}">${esc(skRow.event)}</a>. #${skRow.rank} in the world, #${skRegion} in ${esc(regionOf(skRow))}. <a href="#/skills">Skills standings</a></p>` : ""}`;
   NUMBERS[id] = t.number;
   const me = myTeam() === id;
   const decided = t.matches.filter(m => m.score !== m.opp_score && m.p_win != null);
@@ -425,6 +446,7 @@ async function teamPage(id) {
       <div class="stat"><b>${t.skills ?? "–"}</b><span>best skills</span></div>
       <div class="stat"><b>${decided.length ? pct(right / decided.length) : "–"}</b><span>of its results predicted right</span></div>
     </div>
+    ${season}
     <p><button id="me" class="${me ? "" : "primary"}" aria-pressed="${me}">${me ? `${esc(t.number)} is your team` : "This is my team"}</button></p>
     ${t.history.length > 1 ? `<section class="panel"><h2>Rating through the season</h2>${spark(t.history)}</section>` : ""}
     <section class="panel"><h2>Scouting notes</h2>
@@ -555,6 +577,191 @@ async function accuracy() {
     })() : ""}</p>
     <p>Model settings: ${esc(META.model.source)}.</p></div>`;
   app.innerHTML = html;
+}
+
+// ---------- hub: shared helpers ----------
+const regionOf = t => t.region || t.country || "";
+function regionOptions(rows, selected) {
+  const rs = [...new Set(rows.map(regionOf).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  return `<option value="">All regions</option>${rs.map(r => `<option ${r === selected ? "selected" : ""}>${esc(r)}</option>`).join("")}`;
+}
+async function myRegion() {
+  const me = myTeam();
+  if (!me) return "";
+  const sk = await get(`${SEASON}/skills.json`).catch(() => []);
+  const row = sk.find(r => r.id === me);
+  if (row) return regionOf(row);
+  const board = await get(`${SEASON}/leaderboard.json`).catch(() => []);
+  const b = board.find(r => r.id === me);
+  return b ? regionOf(b) : "";
+}
+
+// ---------- qualification tracker ----------
+async function qualifyPage() {
+  setTitle("Qualification");
+  const [q, sk] = await Promise.all([get(`${SEASON}/qualify.json`), get(`${SEASON}/skills.json`)]);
+  const me = myTeam();
+  const state = { target: store.get("q:target", q.targets[0]?.name || ""), region: store.get("q:region", null) ?? await myRegion() };
+  const rowsAll = Object.entries(q.teams).map(([id, t]) => ({ id: +id, ...t }));
+  for (const r of rowsAll) NUMBERS[r.id] = r.number;
+  for (const r of sk) NUMBERS[r.id] = r.number;
+  const intro = `<h1>Who has qualified?</h1>
+    <p class="lede">Teams that have won an award that qualifies for a championship, straight from the official award results, plus the best teams in each region still without a spot.</p>`;
+  if (!q.targets.length) {
+    app.innerHTML = `${intro}<p class="callout">No qualifying awards have been recorded yet this season${q.events_with_awards ? ` (${q.events_with_awards} events have posted awards so far)` : ""}. This page fills in as events post their awards.</p>`;
+    return;
+  }
+  const draw = () => {
+    const t = state.target, r = state.region;
+    const inR = x => !r || regionOf(x) === r;
+    const qualified = rowsAll.filter(x => inR(x) && x.quals.some(z => z.target === t))
+      .map(x => ({ ...x, mine: x.quals.filter(z => z.target === t) }))
+      .sort((a, b) => a.mine[0].date.localeCompare(b.mine[0].date) || a.number.localeCompare(b.number));
+    const doubles = qualified.filter(x => new Set(x.mine.map(z => `${z.event_id}:${z.award}`)).size > 1);
+    const qset = new Set(rowsAll.filter(x => x.quals.some(z => z.target === t)).map(x => x.id));
+    const next = sk.filter(x => inR(x) && !qset.has(x.id));
+    const mine = me ? (() => {
+      const meQ = rowsAll.find(x => x.id === me);
+      const hit = meQ?.quals.filter(z => z.target === t) || [];
+      if (hit.length) return `<p class="callout good"><b>${esc(num(me))} has qualified</b> for ${esc(t)}: ${hit.map(z => `${esc(z.award)} at <a href="#/event/${z.event_id}">${esc(z.event)}</a>`).join("; ")}.</p>`;
+      const meSk = sk.find(x => x.id === me);
+      if (!meSk) return `<p class="callout">${esc(num(me))} hasn't qualified for ${esc(t)} and has no skills score posted yet.</p>`;
+      const pos = sk.filter(x => regionOf(x) === regionOf(meSk) && !qset.has(x.id)).findIndex(x => x.id === me) + 1;
+      return `<p class="callout">${esc(num(me))} hasn't qualified for ${esc(t)} yet. On skills (${meSk.score}) it is <b>#${pos}</b> among ${esc(regionOf(meSk))} teams without a spot.</p>`;
+    })() : `<p class="muted">Open your team's page and choose "This is my team" to see your own status here.</p>`;
+    $("#qbody").innerHTML = `${mine}
+      <div class="stats">
+        <div class="stat"><b>${qualified.length}</b><span>${r ? esc(r) + " teams" : "teams"} qualified for ${esc(t)}</span></div>
+        <div class="stat"><b>${doubles.length}</b><span>with more than one qualifying award (their extra spots pass down)</span></div>
+      </div>
+      <h2>Qualified</h2>
+      ${qualified.length ? `<div class="panel tablewrap"><table><thead><tr><th>Team</th><th class="hide-m">Region</th><th>How</th><th class="n">Date</th></tr></thead><tbody>
+        ${qualified.map(x => `<tr class="${me === x.id ? "mine" : ""}"><td class="t">${teamLink(x.id)}<span class="subnote">${esc(x.name || "")}</span></td><td class="hide-m">${esc(regionOf(x))}</td>
+          <td>${x.mine.map(z => `${esc(z.award)} · <a href="#/event/${z.event_id}">${esc(z.event)}</a>`).join("<br>")}</td><td class="n">${x.mine[0].date.slice(5)}</td></tr>`).join("")}
+      </tbody></table></div>` : `<p class="empty">Nobody${r ? " in " + esc(r) : ""} has qualified for ${esc(t)} yet.</p>`}
+      <h2>Best skills without a spot</h2>
+      <p class="muted">${r ? esc(r) + " teams" : "Teams"} that haven't qualified for ${esc(t)}, by their best skills score. When a qualified team wins another qualifying award, or spots are left over, they have usually gone to the next teams on this list.</p>
+      ${next.length ? `<div class="panel tablewrap"><table><thead><tr><th class="n">#</th><th>Team</th><th class="n">Skills</th><th class="n">Auto</th><th class="n">Driver</th><th class="n hide-m">World</th></tr></thead><tbody>
+        ${next.slice(0, 25).map((x, i) => `<tr class="${me === x.id ? "mine" : ""}"><td class="n">${i + 1}</td><td class="t">${teamLink(x.id)}<span class="subnote">${esc(regionOf(x))}</span></td>
+          <td class="n"><b>${x.score}</b></td><td class="n">${x.auto}</td><td class="n">${x.driver}</td><td class="n hide-m">#${x.rank}</td></tr>`).join("")}
+      </tbody></table></div>` : `<p class="empty">No skills scores posted${r ? " in " + esc(r) : ""} yet.</p>`}
+      <p class="muted">Spots come from the qualifications VEX lists on each award. VEX hasn't published how many spots each region gets this season, so this page doesn't guess at cut-offs. Updated ${esc(q.updated)} from ${q.events_with_awards} events with posted awards.</p>`;
+  };
+  app.innerHTML = `${intro}
+    <div class="row" style="margin:14px 0">
+      <label class="sr" for="qt">Championship</label><select id="qt">${q.targets.map(x => `<option value="${esc(x.name)}" ${x.name === state.target ? "selected" : ""}>${esc(x.name)} (${x.teams})</option>`).join("")}</select>
+      <label class="sr" for="qr">Region</label><select id="qr">${regionOptions([...rowsAll, ...sk], state.region)}</select>
+    </div><div id="qbody"></div>`;
+  if (!q.targets.some(x => x.name === state.target)) state.target = q.targets[0].name;
+  $("#qt").onchange = e => { state.target = e.target.value; store.set("q:target", state.target); draw(); };
+  $("#qr").onchange = e => { state.region = e.target.value; store.set("q:region", state.region); draw(); };
+  draw();
+}
+
+// ---------- skills standings ----------
+async function skillsPage() {
+  setTitle("Skills");
+  const sk = await get(`${SEASON}/skills.json`);
+  for (const r of sk) NUMBERS[r.id] = r.number;
+  const me = myTeam();
+  const state = { region: store.get("s:region", ""), open: store.get("s:open", false), q: "", shown: 100 };
+  app.innerHTML = `<h1>Skills standings</h1>
+    <p class="lede">Each High School team's best skills score this season: driving plus autonomous coding from the same event, ranked the way the official standings are (ties go to the higher autonomous score).</p>
+    <div class="row" style="margin:14px 0">
+      <input type="text" id="sq" placeholder="Filter by number or name" style="max-width:260px" aria-label="Filter teams">
+      <label class="sr" for="sr">Region</label><select id="sr">${regionOptions(sk, state.region)}</select>
+      <label class="row" style="gap:6px;font-weight:700"><input type="checkbox" id="so" ${state.open ? "checked" : ""}> Only teams without a qualifying spot</label>
+    </div><div id="sbody"></div>`;
+  const draw = () => {
+    const rows = sk.filter(x => (!state.region || regionOf(x) === state.region) && (!state.open || !x.qualified.length));
+    const ranked = rows.map((x, i) => ({ ...x, pos: i + 1 }));
+    const q = state.q.toLowerCase();
+    const shown = ranked.filter(x => !q || x.number.toLowerCase().includes(q) || (x.name || "").toLowerCase().includes(q));
+    const meRow = me && ranked.find(x => x.id === me);
+    $("#sbody").innerHTML = `${meRow ? `<p class="callout">${esc(num(me))}: <b>${meRow.score}</b> (auto ${meRow.auto}, driver ${meRow.driver}), <b>#${meRow.pos}</b> on this list and #${meRow.rank} in the world.</p>` : ""}
+      ${shown.length ? `<div class="panel tablewrap"><table><thead><tr><th class="n">#</th><th>Team</th><th class="n">Score</th><th class="n">Auto</th><th class="n">Driver</th><th class="hide-m">Where</th><th class="n hide-m">World</th></tr></thead><tbody>
+        ${shown.slice(0, state.shown).map(x => `<tr class="${me === x.id ? "mine" : ""}"><td class="n">${x.pos}</td>
+          <td class="t">${teamLink(x.id)}${x.qualified.length ? ` <span class="pill good" title="${esc(x.qualified.join(", "))}">Qualified</span>` : ""}<span class="subnote">${esc(regionOf(x))}</span></td>
+          <td class="n"><b>${x.score}</b></td><td class="n">${x.auto}</td><td class="n">${x.driver}</td>
+          <td class="hide-m"><a href="#/event/${x.event_id}">${esc(x.event)}</a></td><td class="n hide-m">#${x.rank}</td></tr>`).join("")}
+      </tbody></table></div>${shown.length > state.shown ? `<p><button id="smore">Show 100 more</button></p>` : ""}`
+      : `<p class="empty">No teams match. Clear the filters to see everyone.</p>`}`;
+    const more = $("#smore"); if (more) more.onclick = () => { state.shown += 100; draw(); };
+  };
+  $("#sq").oninput = e => { state.q = e.target.value; state.shown = 100; draw(); };
+  $("#sr").onchange = e => { state.region = e.target.value; store.set("s:region", state.region); state.shown = 100; draw(); };
+  $("#so").onchange = e => { state.open = e.target.checked; store.set("s:open", state.open); state.shown = 100; draw(); };
+  draw();
+}
+
+// ---------- event planner ----------
+function distance(a, b) {
+  const r = x => x * Math.PI / 180;
+  const h = Math.sin(r(b[0] - a[0]) / 2) ** 2 + Math.cos(r(a[0])) * Math.cos(r(b[0])) * Math.sin(r(b[1] - a[1]) / 2) ** 2;
+  return 6371 * 2 * Math.asin(Math.sqrt(h));
+}
+async function planPage() {
+  setTitle("Plan your season");
+  const [plan, board] = await Promise.all([get(`${SEASON}/plan.json`), get(`${SEASON}/leaderboard.json`).catch(() => [])]);
+  const ratingOf = Object.fromEntries(board.map(b => [b.id, b.rating]));
+  const hasPage = new Set(META.events.map(e => e.id));
+  const official = sku => `https://events.vex.com/robot-competitions/vex-robotics-competition/${encodeURIComponent(sku)}.html`;
+  const byNumber = Object.fromEntries(Object.entries(NUMBERS).map(([id, n]) => [String(n).toUpperCase(), +id]));
+  const state = { team: myTeam(), radius: store.get("p:radius", 500), days: store.get("p:days", 90), level: "", leagues: false };
+  app.innerHTML = `<h1>Where should we compete?</h1>
+    <p class="lede">Upcoming events near your team, how strong each field is so far, and where your team would sit in it. Fields fill in as teams register, so check back.</p>
+    <div class="panel"><div class="row">
+      <label for="pt">Team</label><input id="pt" type="text" style="max-width:110px" value="${esc(state.team ? num(state.team) : "")}" placeholder="2360A" autocomplete="off">
+      <label class="sr" for="pd">Distance</label><select id="pd">${[[100, "Within 100"], [250, "Within 250"], [500, "Within 500"], [1000, "Within 1,000"], [0, "Any distance"]].map(([v, l]) => `<option value="${v}" ${v === state.radius ? "selected" : ""}>${l}</option>`).join("")}</select>
+      <label class="sr" for="pw">When</label><select id="pw">${[[30, "Next 30 days"], [90, "Next 90 days"], [0, "Rest of the season"]].map(([v, l]) => `<option value="${v}" ${v === state.days ? "selected" : ""}>${l}</option>`).join("")}</select>
+      <label class="sr" for="pl">Level</label><select id="pl"><option value="">All levels</option>${[...new Set(plan.events.map(e => e.level))].sort().map(l => `<option>${esc(l)}</option>`).join("")}</select>
+      <label class="row" style="gap:6px;font-weight:700"><input type="checkbox" id="pg"> Include leagues</label>
+    </div><p class="muted" id="pnote" style="margin-bottom:0"></p></div>
+    <div id="pbody"></div>`;
+  const draw = () => {
+    const loc = state.team ? plan.team_loc[state.team] : null;
+    const miles = loc ? loc[2] === 1 : true;
+    const unit = miles ? "mi" : "km";
+    const conv = d => (miles ? d * 0.621371 : d);
+    const myR = state.team ? ratingOf[state.team] : null;
+    for (const o of $("#pd").options) if (+o.value) o.textContent = `Within ${(+o.value).toLocaleString()} ${unit}`;
+    $("#pnote").textContent = !state.team ? "Enter a team number to see distances and where that team would rank in each field."
+      : !loc ? `No location on file for ${num(state.team)}, so events aren't filtered by distance.`
+      : myR == null ? `${num(state.team)} has no rating yet (no matches this season), so its place in each field isn't shown.`
+      : `${num(state.team)} is rated ${Math.round(myR)}. Field strength is the median and top-8 average rating of registered High School teams.`;
+    const now = Date.now(), horizon = state.days ? now + state.days * 864e5 : Infinity;
+    const rows = plan.events.map(e => ({ ...e, km: loc && e.lat != null ? distance(loc, [e.lat, e.lon]) : null }))
+      .filter(e => (state.leagues || !e.league) && (!state.level || e.level === state.level))
+      .filter(e => Date.parse(e.date) <= horizon)
+      .filter(e => !loc || !state.radius || (e.km != null && conv(e.km) <= state.radius));
+    const place = e => {
+      if (myR == null || !e.ratings?.length) return "–";
+      const better = e.ratings.filter(r => r > myR + 0.05).length;
+      const registered = e.teams?.includes(state.team);
+      return `#${better + 1} of ${e.ratings.length + (registered ? 0 : 1)}`;
+    };
+    $("#pbody").innerHTML = rows.length ? `<p class="muted">${rows.length} event${rows.length === 1 ? "" : "s"}.</p><div class="panel tablewrap"><table><thead><tr>
+        <th class="n hide-m">Date</th><th>Event</th>${loc ? `<th class="n">Away</th>` : ""}<th class="n">Teams</th><th class="n hide-m">Median</th><th class="n hide-m">Top 8</th><th class="n">${state.team ? "You" : "Place"}</th></tr></thead><tbody>
+      ${rows.map(e => `<tr class="${e.teams?.includes(state.team) ? "mine" : ""}"><td class="n hide-m">${e.date.slice(5)}</td>
+        <td>${hasPage.has(e.id) ? `<a href="#/event/${e.id}">${esc(e.name)}</a>` : `<a href="${official(e.sku)}" target="_blank" rel="noopener">${esc(e.name)}</a>`}${e.level !== "Other" ? ` <span class="pill">${esc(e.level)}</span>` : ""}${e.teams?.includes(state.team) ? ` <span class="pill good">Registered</span>` : ""}
+          <span class="subnote">${esc([new Date(e.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }), e.city, e.region, e.country !== "United States" ? e.country : ""].filter(Boolean).join(" · "))}</span></td>
+        ${loc ? `<td class="n" style="white-space:nowrap">${e.km == null ? "–" : `${Math.round(conv(e.km)).toLocaleString()} ${unit}`}</td>` : ""}
+        <td class="n">${e.hs ?? "–"}</td><td class="n hide-m">${rnd(e.median)}</td><td class="n hide-m">${rnd(e.top8)}</td><td class="n" style="white-space:nowrap">${place(e)}</td></tr>`).join("")}
+      </tbody></table></div>
+      <p class="muted">"You" ranks your team by rating among the High School teams registered so far, counting your team in. Only teams with matches this season have ratings. Events with registered High School teams open their forecast page here; the rest link to the official event page.</p>`
+      : `<p class="empty">No events match. Try a larger distance, a longer time window, or include leagues.</p>`;
+  };
+  $("#pt").onchange = e => {
+    const id = byNumber[e.target.value.trim().toUpperCase()];
+    state.team = id || null;
+    if (!id && e.target.value.trim()) $("#pnote").textContent = `No team ${e.target.value.trim()} found this season.`;
+    draw();
+  };
+  $("#pd").onchange = e => { state.radius = +e.target.value; store.set("p:radius", state.radius); draw(); };
+  $("#pw").onchange = e => { state.days = +e.target.value; store.set("p:days", state.days); draw(); };
+  $("#pl").onchange = e => { state.level = e.target.value; draw(); };
+  $("#pg").onchange = e => { state.leagues = e.target.checked; draw(); };
+  draw();
 }
 
 boot();
