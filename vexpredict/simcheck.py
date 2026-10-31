@@ -22,7 +22,8 @@ import numpy as np
 
 from .config import REPORTS_DIR, slugify
 from .dataset import Match, Season, load_season
-from .models.epa import EPA, EPASkills
+from .models.epa import EPA
+from .tuned import tuned_model
 from .simulator import (ScoreNoise, SimInputs, fit_score_noise, simulate, standings_from_matches,
                         team_rates)
 
@@ -214,21 +215,9 @@ def main(argv=None) -> None:
     args = ap.parse_args(argv)
     slug = slugify(args.season)
     season = load_season(slug)
-    params = _tuned_params(slug)
-    model = EPASkills(**params) if params else EPA()
+    model = tuned_model(slug) or EPA()
     res = run_check(season, model, sims=args.sims)
     print("Report:", write_report(res, REPORTS_DIR / slug))
-
-
-def _tuned_params(slug: str) -> dict:
-    """Reuse the backtest's tuned EPA + skills parameters if the backtest ran."""
-    path = REPORTS_DIR / slug / "metrics.json"
-    if not path.exists():
-        return {}
-    p = dict(json.loads(path.read_text())["results"]["EPA + skills prior"]["params"])
-    a, b = p.pop("skills_a"), p.pop("skills_b")
-    p["skills_map"] = (a, b)
-    return p
 
 
 if __name__ == "__main__":

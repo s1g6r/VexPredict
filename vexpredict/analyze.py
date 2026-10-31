@@ -16,9 +16,10 @@ from .backtest import _rows, fit_temperature, run
 from .config import REPORTS_DIR, slugify
 from .dataset import Season, load_season
 from .metrics import summarize
+from .models.base import Model
 from .models.epa import EPASkills
 from .models.trueskill_model import TrueSkill
-from .simcheck import _tuned_params
+from .tuned import tuned_model
 
 
 def _bucket(v: float, edges: list[float], labels: list[str]) -> str:
@@ -28,9 +29,10 @@ def _bucket(v: float, edges: list[float], labels: list[str]) -> str:
     return labels[-1]
 
 
-def analyze(season: Season, params: dict, train_frac: float = 0.4) -> dict:
+def analyze(season: Season, model: Model | None = None, train_frac: float = 0.4) -> dict:
     split = season.matches[int(len(season.matches) * train_frac)].ts
-    epa = run(EPASkills(**params), season)
+    model = model or EPASkills()
+    epa = run(model, season)
     ts = run(TrueSkill(), season)
     t_epa = fit_temperature([r for r in epa if r.m.ts < split])
     ev_size = defaultdict(set)
@@ -63,7 +65,7 @@ def analyze(season: Season, params: dict, train_frac: float = 0.4) -> dict:
     order = {"Fewest season matches among the 4 teams": ["0", "1-4", "5-9", "10-19", "20-39", "40+"],
              "Event size (teams)": ["<16", "16-31", "32-47", "48-79", "80+"],
              "Predicted margin (share of avg score)": ["<5%", "5-15%", "15-30%", "30-60%", "60%+"]}
-    out = {"season": season.name, "params": params, "groups": {}}
+    out = {"season": season.name, "model": model.name, "groups": {}}
     for g, buckets in groups.items():
         rows = []
         ranked = order.get(g)
@@ -92,7 +94,7 @@ def write_report(res: dict, out_dir) -> str:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "analysis.json").write_text(json.dumps(res, indent=2))
     L = [f"# Where the model wins and loses: {res['season']}", "",
-         "High School test-period matches. EPA = EPA + skills prior with the backtest's tuned settings; "
+         f"High School test-period matches. EPA = {res.get('model', 'EPA')} with the backtest's tuned settings; "
          "TrueSkill uses default settings. Brier: lower is better.", ""]
     for g, rows in res["groups"].items():
         L += [f"## {g}", "", "| Bucket | Matches | EPA acc | TrueSkill acc | EPA Brier | TrueSkill Brier |",
@@ -117,7 +119,7 @@ def main(argv=None) -> None:
     ap.add_argument("--season", default="Push Back")
     args = ap.parse_args(argv)
     slug = slugify(args.season)
-    res = analyze(load_season(slug), _tuned_params(slug))
+    res = analyze(load_season(slug), tuned_model(slug))
     print("Report:", write_report(res, REPORTS_DIR / slug))
 
 

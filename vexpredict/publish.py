@@ -28,7 +28,9 @@ import numpy as np
 
 from .config import REPORTS_DIR, ROOT, slugify
 from .dataset import Match, Season, load_season
-from .models.epa import EPA, EPASkills, fit_skills_map
+from .models.base import Model
+from .models.epa import EPAMix, EPASkills, build_epa, fit_skills_map
+from .tuned import tuned_settings
 from .simulator import (ScoreNoise, SimInputs, captain_count, fit_score_noise, simulate,
                         standings_from_matches, standings_from_rankings, team_rates)
 
@@ -51,23 +53,20 @@ def _write(path: Path, obj) -> None:
     os.replace(tmp, path)
 
 
-def build_model(season: Season, slug: str, tune_from: str | None = None) -> tuple[EPA, dict]:
-    """EPA + skills prior with the best available settings: this season's
-    backtest if it exists, else another season's (e.g. Push Back settings for
-    Override), else defaults. The skills-to-points map is refit on this season
-    once there is enough data, since each game scores differently."""
-    for src in (slug, tune_from):
-        metrics = REPORTS_DIR / src / "metrics.json" if src else None
-        if metrics and metrics.exists():
-            p = dict(json.loads(metrics.read_text())["results"]["EPA + skills prior"]["params"])
-            p["skills_map"] = (p.pop("skills_a"), p.pop("skills_b"))
-            source = "tuned by backtest" if src == slug else f"tuned by the {src} backtest"
-            if src != slug and season.matches:
-                a, b, _, n = fit_skills_map(season, season.matches[-1].ts + 1)
-                if n >= 200:
-                    p["skills_map"] = (a, b)
-            return EPASkills(**p), {"source": source, **{k: v for k, v in p.items() if k != "skills_map"},
-                                    "skills_map": list(p["skills_map"])}
+def build_model(season: Season, slug: str, tune_from: str | None = None) -> tuple[Model, dict]:
+    """The rating model with the best available settings and calibration: this
+    season's backtest if it exists, else another season's (e.g. Push Back
+    settings for Override), else defaults. The skills-to-points map is refit
+    on this season once there is enough data, since each game scores
+    differently."""
+    params, temp, src, name = tuned_settings(slug, tune_from)
+    if params:
+        source = "tuned by backtest" if src == slug else f"tuned by the {src} backtest"
+        if src != slug and season.matches:
+            a, b, _, n = fit_skills_map(season, season.matches[-1].ts + 1)
+            if n >= 200:
+                params["skills_a"], params["skills_b"] = a, b
+        return build_epa(params, temp), {"source": source, "name": name, "temperature": temp, **params}
     split = season.matches[int(len(season.matches) * 0.4)].ts if season.matches else math.inf
     a, b, _, _ = fit_skills_map(season, split)
     return EPASkills(skills_map=(a, b)), {"source": "defaults (run the backtest to tune)", "skills_map": [a, b]}
@@ -277,11 +276,9 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
         if pend:
             pend_rating = {t: rating_now(t) for t in teams}
             for p in pend:
-                r_ = sum(pend_rating[t] for t in p.red)
-                b_ = sum(pend_rating[t] for t in p.blue)
-                pr = 1 / (1 + math.exp(-(r_ - b_) / (model.prob_k * model.scale.std)))
+                pp = model.predict_teams(p.red, p.blue)
                 rec["pending"].append({"num": p.matchnum, "div": p.division_id, "red": list(p.red), "blue": list(p.blue),
-                                       "p": _r(pr, 3), "pr": _r(r_), "pb": _r(b_)})
+                                       "p": _r(pp.p_red, 3), "pr": _r(pp.red), "pb": _r(pp.blue)})
             live = []
             for did, group in sorted(_qual_groups(ms, pend).items()):
                 dpend = [x for x in group if not isinstance(x, Match)]
@@ -359,7 +356,8 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
     meta = {"season": season.name, "slug": slug, "synthetic": season.synthetic,
             "generated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="minutes"),
             "model": {"name": model.name, **model_info, "score_noise": [noise.c0, noise.c1], "u0": u0,
-                      "score_std": model.scale.std, "prob_k": model.prob_k},
+                      "score_std": model.scale.std,
+                      **({"weights_now": {str(k): v for k, v in model.weights.items()}} if isinstance(model, EPAMix) else {})},
             "teams_rated": len(board), "events": sorted(index, key=lambda e: e["date"], reverse=True)}
     _write(out / "meta.json", meta)
     seasons_path = (out.parent / "seasons.json")

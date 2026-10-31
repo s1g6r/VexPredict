@@ -542,6 +542,7 @@ async function accuracy() {
   }
   html += `<h2>How the rating works</h2><div class="panel"><p>Each team has one number: the points it adds to its alliance in an average match. Before a match, the two partners' numbers are added up to predict each alliance's score. Afterwards, each team's number moves toward what actually happened. It moves a lot for new teams and less as a team plays more, and one freak result can only move it so far.</p>
     <p>Skills runs are solo, so they show what a robot can do on its own. A team's published skills scores set its starting rating and pull its rating toward them at the start of each new event. That matters most early in the season, when teams have played few matches.</p>
+    <p>How much a match moves a rating depends on the time of season. Early on, alliances mostly score on their own, so a team is judged by its alliance's score. Once fields get strong, scoring is contested and defense matters, so the winning margin says more. Several versions of the rating run side by side, from "own score" to "margin", and each prediction leans on whichever has been predicting recent matches best. That uses only matches already played.${META.model.weights_now ? ` Right now: ${Object.entries(META.model.weights_now).filter(([, w]) => w >= 0.01).sort((a, b) => b[1] - a[1]).map(([k, w]) => `${pct(w)} ${+k === 0 ? "own score" : +k === 1 ? "margin" : `${pct(+k)} margin`}`).join(", ")}.` : ""}</p>
     <p>Model settings: ${esc(META.model.source)}.</p></div>`;
   app.innerHTML = html;
 }

@@ -11,9 +11,10 @@ import shutil
 from .backtest import evaluate, write_report
 from .config import REPORTS_DIR, season_dir
 from .dataset import load_season
-from .models.epa import EPASkills
 from .publish import publish
-from .simcheck import _tuned_params, run_check
+from .models.epa import EPASkills
+from .simcheck import run_check
+from .tuned import tuned_model
 from .simcheck import write_report as write_sim
 from .synth import add_upcoming, generate, make_live
 
@@ -28,7 +29,7 @@ def main() -> None:
     add_upcoming(raw, now, [t for t in info["teams"] if t["grade"] == "High School"])
     season = load_season(SLUG)
     write_report(evaluate(season), REPORTS_DIR / SLUG)
-    write_sim(run_check(season, EPASkills(**_tuned_params(SLUG)), sims=800), REPORTS_DIR / SLUG)
+    write_sim(run_check(season, tuned_model(SLUG) or EPASkills(), sims=800), REPORTS_DIR / SLUG)
     print("Published demo to", publish(season, SLUG, now_ts=now))
 
 

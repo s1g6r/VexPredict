@@ -24,7 +24,7 @@ from .config import REPORTS_DIR, slugify
 from .dataset import Match, Season, load_season
 from .metrics import Row, calibration, summarize
 from .models.base import Model, Pred, sigmoid
-from .models.epa import EPA, EPASkills, fit_skills_map
+from .models.epa import EPA, EPAMix, EPASkills, fit_skills_map
 from .models.opr import EventCCWM, EventOPR, WinRate
 from .models.trueskill_model import TrueSkill
 
@@ -128,7 +128,10 @@ EPA_GRID = {
     "huber_c": [1.0, 1.5, 2.5, 100.0],
     "elim_weight": [0.0, 0.33, 0.66, 1.0],
     "init_frac": [0.6, 0.8, 1.0, 1.2],
+    "gap_tau": [0.0, 30.0],
 }
+MARGIN_WS = (0.0, 0.25, 0.5, 0.75, 1.0)
+from .tuned import ADAPTIVE  # noqa: E402  (the model the site uses)
 
 
 def evaluate(season: Season, train_frac: float = 0.4, quick: bool = False,
@@ -166,6 +169,21 @@ def evaluate(season: Season, train_frac: float = 0.4, quick: bool = False,
         sk_params, _ = tune(EPASkills, {"anchor_n": [0.0, 2.0, 6.0, 15.0, 40.0]}, season, split, base=sk_base,
                             passes=1, log=log)
     specs.append(("EPA + skills prior", EPASkills, sk_params, True))
+
+    # Adaptive: the margin_w versions side by side, each calibrated on the
+    # training period, weighted online by recent log loss.
+    sub_temps = []
+    for w in MARGIN_WS:
+        p = dict(sk_params, margin_w=w)
+        sub_temps.append(1.0 if quick else fit_temperature(run(EPASkills(**p), season, until_ts=split)))
+    mix_base = dict(sk_params, margin_ws=MARGIN_WS, sub_temps=tuple(sub_temps))
+    if quick:
+        mix_params = dict(mix_base, half_life=1000.0)
+    else:
+        log(f"  tuning {ADAPTIVE} (version temperatures {[round(t, 2) for t in sub_temps]}) ...")
+        mix_params, _ = tune(EPAMix, {"half_life": [300.0, 1000.0, 3000.0, 10000.0]}, season, split,
+                             base=mix_base, passes=1, log=log)
+    specs.append((ADAPTIVE, EPAMix, mix_params, True))
     log(f"  tuning done in {time.time() - t0:.0f}s")
 
     results = {}
@@ -177,6 +195,7 @@ def evaluate(season: Season, train_frac: float = 0.4, quick: bool = False,
         temp = fit_temperature(train) if calibrate else 1.0
         test = [r for r in recs if r.m.ts >= split]
         results[name] = {"params": _jsonable(model.params()), "temperature": temp,
+                         **({"final_weights": {str(k): v for k, v in model.weights.items()}} if isinstance(model, EPAMix) else {}),
                          "slices": _slices(season, test, temp),
                          "calibration": calibration(_rows([r for r in test if season.is_hs_match(r.m)], temp))}
         hs = results[name]["slices"]["HS, all matches"]

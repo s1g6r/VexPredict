@@ -6,7 +6,7 @@ import pytest
 
 from vexpredict import backtest
 from vexpredict.dataset import Match, load_season
-from vexpredict.models.epa import EPA, EPASkills, fit_skills_map
+from vexpredict.models.epa import EPA, EPAMix, EPASkills, fit_skills_map
 from vexpredict.models.opr import EventCCWM, EventOPR, WinRate
 from vexpredict.models.trueskill_model import TrueSkill
 from vexpredict.synth import generate
@@ -62,7 +62,7 @@ def test_trueskill_matches_reference_package():
         assert sigma == pytest.approx(ref[t].sigma, abs=1e-4)
 
 
-@pytest.mark.parametrize("factory", [TrueSkill, WinRate, EventOPR, EventCCWM, EPA, EPASkills])
+@pytest.mark.parametrize("factory", [TrueSkill, WinRate, EventOPR, EventCCWM, EPA, EPASkills, EPAMix])
 def test_no_future_leakage(season, factory):
     """Predictions for the first half must be identical whether or not the
     second half of the season exists."""
@@ -136,7 +136,7 @@ def test_skills_prior_beats_field_average_at_first_appearance(season):
 
 def test_analysis_report(season, tmp_path):
     from vexpredict import analyze
-    res = analyze.analyze(season, {})
+    res = analyze.analyze(season)
     assert res["groups"]["Round"] and "score_calibration" in res
     assert abs(res["score_bias"]) < 15
     path = analyze.write_report(res, tmp_path)

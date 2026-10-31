@@ -56,3 +56,36 @@ def test_site_predictions_are_pre_match_backtest_predictions(published):
     ev = json.loads((out / "events" / f"{eid}.json").read_text())
     for shown, r in zip(ev["matches"], by_event[eid]):
         assert shown["p"] == pytest.approx(r.pred.p_red, abs=6e-4)
+
+
+def test_site_uses_tuned_adaptive_model_with_its_calibration(tmp_path, monkeypatch):
+    """With backtest settings saved, the site must show the adaptive model's
+    probabilities with the backtest's fitted temperature applied (the
+    backtest's accuracy numbers are for calibrated probabilities)."""
+    from vexpredict import tuned
+    from vexpredict.models.epa import EPAMix
+    raw = tmp_path / "raw"
+    generate(raw, n_teams=120, n_events=20, n_skills_events=5, seed=4)
+    season = load_season("t", root=raw)
+    params = {"k_start": 0.3, "k_end": 0.15, "k_tau": 8.0, "elim_weight": 0.33, "huber_c": 100.0, "prob_k": 0.6,
+              "init_frac": 0.8, "gap_tau": 0.0, "skills_a": 0.8, "skills_b": 0.25, "anchor_n": 15.0,
+              "margin_ws": [0.0, 1.0], "sub_temps": [0.6, 0.7], "half_life": 300.0}
+    reports = tmp_path / "reports"
+    (reports / "t").mkdir(parents=True)
+    (reports / "t" / "metrics.json").write_text(json.dumps({"results": {
+        "EPA + skills, adaptive": {"params": params, "temperature": 0.8}}}))
+    monkeypatch.setattr(tuned, "REPORTS_DIR", reports)
+    out = publish.publish(season, "t", out=tmp_path / "site")
+    meta = json.loads((out / "meta.json").read_text())
+    assert meta["model"]["name"] == "EPA + skills, adaptive" and meta["model"]["temperature"] == 0.8
+    p = dict(params, skills_map=(params.pop("skills_a"), params.pop("skills_b")))
+    calibrated = backtest.run(EPAMix(temp=0.8, **p), season)
+    raw_recs = backtest.run(EPAMix(**p), season)
+    eid = calibrated[-1].m.event_id
+    ev = json.loads((out / "events" / f"{eid}.json").read_text())
+    mine = [r for r in calibrated if r.m.event_id == eid]
+    raws = [r for r in raw_recs if r.m.event_id == eid]
+    assert len(ev["matches"]) == len(mine) > 10
+    for shown, r, r0 in zip(ev["matches"], mine, raws):
+        assert shown["p"] == pytest.approx(r.pred.p_red, abs=6e-4)
+    assert any(abs(r.pred.p_red - r0.pred.p_red) > 0.01 for r, r0 in zip(mine, raws))
