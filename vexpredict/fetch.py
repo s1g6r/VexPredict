@@ -72,12 +72,19 @@ def fetch_event(client: Client, event: dict) -> dict:
     skills = client.event_skills(eid)
     matches, rankings = [], []
     for div in event.get("divisions") or []:
-        for getter, sink in ((client.division_matches, matches), (client.division_rankings, rankings)):
-            try:
-                sink.extend(getter(eid, div["id"]))
-            except ApiError as e:
-                if "404" in str(e):
-                    continue
+        try:
+            div_matches = client.division_matches(eid, div["id"])
+        except ApiError as e:
+            if "404" in str(e):
+                continue
+            raise
+        matches.extend(div_matches)
+        if not div_matches:          # skills-only or cancelled: no rankings to fetch
+            continue
+        try:
+            rankings.extend(client.division_rankings(eid, div["id"]))
+        except ApiError as e:
+            if "404" not in str(e):
                 raise
     return {"event": event, "teams": teams, "skills": skills, "matches": matches, "rankings": rankings,
             "fetched_at": dt.datetime.now(dt.timezone.utc).isoformat()}

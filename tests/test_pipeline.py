@@ -132,3 +132,12 @@ def test_skills_prior_beats_field_average_at_first_appearance(season):
         model.update(m)
     assert len(err_prior) > 50
     assert np.mean(err_prior) < 0.8 * np.mean(err_mean)
+
+
+def test_analysis_report(season, tmp_path):
+    from vexpredict import analyze
+    res = analyze.analyze(season, {})
+    assert res["groups"]["Round"] and "score_calibration" in res
+    assert abs(res["score_bias"]) < 15
+    path = analyze.write_report(res, tmp_path)
+    assert "Fewest season matches" in open(path).read()
