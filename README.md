@@ -104,6 +104,13 @@ December to May, by 3 to 5 points; the summer months have under 50 matches.
 Its score predictions miss by 19.8 points per alliance on average, against
 22.6 for in-event OPR.
 
+To be clear about how it was built: the adaptive model was added after the
+first real backtest showed this late-season fade. Its settings were still chosen
+on the training period only (that period alone already prefers it: training
+log loss 0.4852 against 0.4880). But the idea itself came from looking at
+test-period results, so the clean out-of-sample check is Override. That
+season's accuracy will be published once enough of it has been played.
+
 The **event simulator** plays out the remaining schedule 1,500 times using the
 ratings, rating uncertainty, a fitted score-noise model, and V5RC ranking rules:
 WP (win 2, tie 1, plus autonomous win points), then AP, then SP. Autonomous
