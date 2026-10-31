@@ -15,6 +15,8 @@ from vexpredict.dataset import load_season
 NOW = dt.datetime.now(dt.timezone.utc)
 OLD = (NOW - dt.timedelta(days=30)).isoformat()
 RECENT = (NOW - dt.timedelta(hours=5)).isoformat()
+LATER = (NOW + dt.timedelta(days=60)).isoformat()      # within the planner window
+FAR = (NOW + dt.timedelta(days=400)).isoformat()       # beyond it
 
 
 def _match(i, red, blue, rs, bs, scored=True):
@@ -56,6 +58,10 @@ class Fake(http.server.BaseHTTPRequestHandler):
             evs.append({"id": 20, "sku": "RE-V5RC-25-20", "name": "Live one", "start": RECENT, "end": RECENT,
                         "event_type": "tournament", "divisions": [{"id": 1, "name": "D"}]})
             evs.append({"id": 30, "sku": "W", "name": "Workshop", "start": OLD, "end": OLD, "event_type": "workshop", "divisions": []})
+            evs.append({"id": 40, "sku": "RE-V5RC-25-40", "name": "Later", "start": LATER, "end": LATER,
+                        "event_type": "tournament", "divisions": [{"id": 1, "name": "D"}]})
+            evs.append({"id": 50, "sku": "RE-V5RC-25-50", "name": "Far", "start": FAR, "end": FAR,
+                        "event_type": "tournament", "divisions": [{"id": 1, "name": "D"}]})
             return self._page(evs, page, per=2)
         if p.endswith("/teams"):
             return self._page([{"id": t, "number": f"{t}A", "grade": "High School"} for t in range(1, 5)], page)
@@ -64,6 +70,10 @@ class Fake(http.server.BaseHTTPRequestHandler):
         if p.endswith("/matches"):
             ms = [_match(i, (1, 2), (3, 4), 10 + i, 12) for i in range(1, 6)] + [_match(6, (1, 3), (2, 4), 0, 0, scored=False)]
             return self._page(ms, page, per=4)
+        if p.endswith("/awards"):
+            return self._page([{"id": 1, "title": "Excellence Award (VRC/VEXU/VAIRC)",
+                                "qualifications": ["State Championship"],
+                                "teamWinners": [{"team": {"id": 2, "name": "2A"}, "division": {"id": 1}}]}], page)
         if p.endswith("/rankings"):
             return self._page([{"rank": 1, "team": {"id": 1}, "division": {"id": 1}, "wins": 3, "losses": 2, "ties": 0,
                                 "wp": 7, "ap": 20, "sp": 50}], page)
@@ -101,10 +111,14 @@ def api(tmp_path, monkeypatch):
 def test_pull_resume_and_load(api):
     fetch.main(["--season", "Push Back", "--min-interval", "0"])
     files = sorted(p.name for p in (api / "raw" / "push-back" / "events").glob("*.json"))
-    assert files == ["10.json", "11.json", "12.json", "20.json"]           # workshop skipped
+    assert files == ["10.json", "11.json", "12.json", "20.json", "40.json"]   # workshop and far-off skipped
     rec = json.loads((api / "raw" / "push-back" / "events" / "10.json").read_text())
     assert len(rec["matches"]) == 6 and rec["rankings"] and rec["skills"]   # all pages, 429 retried
-    assert rec["final"] is True
+    assert rec["final"] is True and rec["awards"][0]["teamWinners"][0]["team"]["id"] == 2
+    later = json.loads((api / "raw" / "push-back" / "events" / "40.json").read_text())
+    assert later["teams_only"] and later["teams"] and not later["matches"]  # not started: team list only
+    cal = json.loads((api / "raw" / "push-back" / "season.json").read_text())["calendar"]
+    assert {e["id"] for e in cal} >= {10, 40, 50}                           # planner sees every event
     live = json.loads((api / "raw" / "push-back" / "events" / "20.json").read_text())
     assert live["final"] is False
 
@@ -112,7 +126,17 @@ def test_pull_resume_and_load(api):
     Fake.hits.clear()
     fetch.main(["--season", "Push Back", "--min-interval", "0"])
     touched = {h.split("/events/")[1].split("/")[0] for h in Fake.hits if "/events/" in h}
-    assert touched == {"20"}
+    assert touched == {"20"}                                                # far-off team list is fresh
+
+    # an event saved before awards were pulled gets just its awards added
+    path10 = api / "raw" / "push-back" / "events" / "10.json"
+    old = json.loads(path10.read_text())
+    del old["awards"]
+    path10.write_text(json.dumps(old))
+    Fake.hits.clear()
+    fetch.main(["--season", "Push Back", "--min-interval", "0"])
+    assert [h for h in Fake.hits if "/events/10/" in h] == ["/api/v2/events/10/awards"]
+    assert json.loads(path10.read_text())["awards"]
 
     season = load_season("push-back", root=api / "raw" / "push-back")
     assert len(season.matches) == 4 * 5                                     # unscored match dropped

@@ -26,6 +26,8 @@ from .config import V5RC_PROGRAM_ID, load_token, season_dir, slugify
 FINAL_AFTER_DAYS = 3  # results are treated as final this long after an event ends
 LEAGUE_DAYS = 2       # events longer than this are leagues (one night a week for months)
 LEAGUE_REFRESH_HOURS = 6
+PLAN_DAYS = 150          # team lists are kept for events up to this far ahead (event planner)
+FUTURE_REFRESH_DAYS = 3  # how often those far-off team lists are re-pulled
 SKIP_EVENT_TYPES = {"workshop"}
 
 
@@ -85,9 +87,14 @@ def wanted_now(event: dict, saved: dict | None, now: dt.datetime) -> bool:
     return True
 
 
-def fetch_event(client: Client, event: dict) -> dict:
+def fetch_event(client: Client, event: dict, now: dt.datetime | None = None) -> dict:
     eid = event["id"]
     teams = client.event_teams(eid)
+    start = parse_date(event.get("start"))
+    if now and start and start - now > dt.timedelta(days=1):
+        # not started: only the registered teams exist yet
+        return {"event": event, "teams": teams, "skills": [], "matches": [], "rankings": [], "awards": [],
+                "fetched_at": dt.datetime.now(dt.timezone.utc).isoformat(), "teams_only": True}
     skills = client.event_skills(eid)
     matches, rankings = [], []
     for div in event.get("divisions") or []:
@@ -105,8 +112,14 @@ def fetch_event(client: Client, event: dict) -> dict:
         except ApiError as e:
             if "404" not in str(e):
                 raise
+    try:
+        awards = client.event_awards(eid)
+    except ApiError as e:
+        if "404" not in str(e):
+            raise
+        awards = []
     return {"event": event, "teams": teams, "skills": skills, "matches": matches, "rankings": rankings,
-            "fetched_at": dt.datetime.now(dt.timezone.utc).isoformat()}
+            "awards": awards, "fetched_at": dt.datetime.now(dt.timezone.utc).isoformat()}
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -115,7 +128,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--max-events", type=int, default=0, help="stop after this many downloads (0 = no limit)")
     ap.add_argument("--include-future", action="store_true", help="also save every event that has not started")
     ap.add_argument("--ahead-days", type=float, default=14,
-                    help="also save events starting within this many days (team lists for pre-event forecasts)")
+                    help="re-pull events starting within this many days on every run (pre-event forecasts)")
+    ap.add_argument("--plan-days", type=float, default=PLAN_DAYS,
+                    help="keep team lists for events up to this many days ahead, refreshed every few days")
     ap.add_argument("--min-interval", type=float, default=0.25, help="seconds between API requests")
     ap.add_argument("--live-only", action="store_true",
                     help="quick refresh: only events on today (and leagues every few hours); for frequent runs")
@@ -130,11 +145,14 @@ def main(argv: list[str] | None = None) -> None:
     events = client.season_events(season["id"])
     now = dt.datetime.now(dt.timezone.utc)
     events = [e for e in events if (e.get("event_type") or "").lower() not in SKIP_EVENT_TYPES]
+    calendar = list(events)   # every event of the season, for the event planner
+    soon = now + dt.timedelta(days=args.ahead_days)
     if not args.include_future:
-        horizon = now + dt.timedelta(days=args.ahead_days)
+        horizon = now + dt.timedelta(days=args.plan_days)
         events = [e for e in events if (parse_date(e.get("start")) or now) <= horizon]
     events.sort(key=lambda e: e.get("start") or "")
-    write_json(out / "season.json", {"season": season, "event_count": len(events)})
+    write_json(out / "season.json", {"season": season, "event_count": len(events),
+                                     "calendar": calendar, "calendar_at": now.isoformat()})
     print(f"{len(events)} events to check")
 
     downloaded = skipped = failed = 0
@@ -150,16 +168,36 @@ def main(argv: list[str] | None = None) -> None:
                 if not wanted_now(ev, saved, now):
                     skipped += 1
                     continue
+            start = parse_date(ev.get("start"))
+            if path.exists() and start and start > soon and not args.include_future:
+                # far-off event: its team list only needs a refresh every few days
+                try:
+                    got = parse_date(json.loads(path.read_text()).get("fetched_at"))
+                except json.JSONDecodeError:
+                    got = None
+                if got and now - got < dt.timedelta(days=FUTURE_REFRESH_DAYS):
+                    skipped += 1
+                    continue
             if path.exists() and is_final(ev, now):
                 try:
                     saved = json.loads(path.read_text())
                     if saved.get("final") and "rankings" in saved:
+                        if "awards" not in saved:   # saved before awards were pulled: add just those
+                            try:
+                                saved["awards"] = client.event_awards(ev["id"])
+                            except ApiError as e:
+                                if "404" not in str(e):
+                                    raise
+                                saved["awards"] = []
+                            write_json(path, saved)
+                            downloaded += 1
+                            continue
                         skipped += 1
                         continue
                 except json.JSONDecodeError:
                     pass
             try:
-                rec = fetch_event(client, ev)
+                rec = fetch_event(client, ev, now)
             except ApiError as e:
                 failed += 1
                 print(f"[{i}/{len(events)}] {ev.get('sku')} FAILED: {e}", file=sys.stderr)

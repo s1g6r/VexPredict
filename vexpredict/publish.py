@@ -36,6 +36,7 @@ from .simulator import (ScoreNoise, SimInputs, captain_count, fit_score_noise, s
 
 SITE_DATA = ROOT / "site" / "data"
 SIMS = 1500
+SIM_AHEAD = 14 * 86400     # full ranking forecasts for events starting within two weeks
 STALE_AFTER = 2 * 86400   # unplayed matches this long after an event's end will never be played
 
 
@@ -305,7 +306,7 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
                 rec["sim_live"] = _merge(live)
         elif not ms and status in ("upcoming", "live") and len(ev.divisions) > 1:
             rec["divisions_pending"] = True   # teams aren't split into divisions until the schedule is out
-        elif not ms and status in ("upcoming", "live") and len(teams) >= 8:
+        elif not ms and status in ("upcoming", "live") and len(teams) >= 8 and ev.start - now_ts < SIM_AHEAD:
             rec["sim_pre"] = _merge([(0, run_sim(season, teams, {t: rating_now(t) for t in teams}, played_n,
                                                  model.scale.std, noise, u0, now_ts, eid, played=[]))])
         _write(out / "events" / f"{eid}.json", rec)

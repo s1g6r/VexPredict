@@ -145,6 +145,9 @@ class Client:
     def event_skills(self, event_id: int) -> list:
         return self.get_all(f"events/{event_id}/skills")
 
+    def event_awards(self, event_id: int) -> list:
+        return self.get_all(f"events/{event_id}/awards")
+
     def division_matches(self, event_id: int, division_id: int) -> list:
         return self.get_all(f"events/{event_id}/divisions/{division_id}/matches")
 
