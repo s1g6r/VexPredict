@@ -120,7 +120,7 @@ tendencies come from each team's earlier events.
 ## How it's tested
 
 - **Backtest and simulator check:** described above. Both are rerun from the raw data with one command each.
-- **Tests (`python3 -m pytest -q`, 32 of them):**
+- **Tests (`python3 -m pytest -q`, 34 of them):**
   - TrueSkill matches the reference `trueskill` package.
   - No model's past predictions change when future matches are added (all seven models, including the adaptive mix).
   - OPR recovers the true strengths on synthetic data.
@@ -129,7 +129,8 @@ tendencies come from each team's earlier events.
   - The site shows exactly the pre-match predictions, with the backtest's calibration applied.
   - League and missing-time ordering never puts a match earlier than reality.
   - Divisions are forecast separately.
-  - The data pull is checked against a fake API (pagination, HTTP 429, resume, bad token).
+  - The data pull is checked against a fake API (pagination, HTTP 429, resume, bad token), and the quick event-day refresh picks the right events.
+  - Events with leftover unplayed matches don't stay "live" after they end.
   - Every site page loads in a real browser with no errors and no sideways scrolling on a phone, including switching divisions.
 
 ## Updating the data (no laptop needed)
@@ -149,8 +150,13 @@ The token lives in the repository secret `VEX_TOKEN`, which is already set.
 
 After that, the site re-pulls Override and republishes every 10 minutes from
 Friday to Sunday (tournament days) and daily otherwise. It uses the settings the
-Push Back backtest tuned. The API token stays in GitHub's secret store and never
-reaches the site.
+Push Back backtest tuned.
+
+- **10-minute runs:** these only re-pull events that are on today, and leagues every few hours, so each run stays short.
+- **Daily run:** this re-pulls everything unfinished.
+- **First run:** this starts from the exported `data/override` branch instead of pulling the whole season.
+
+The API token stays in GitHub's secret store and never reaches the site.
 
 Until then, `python3 -m vexpredict.bundle --seasons override` packs the
 published site into chunks that can be hosted privately (that's how the preview
