@@ -5,6 +5,10 @@ name: Update predictions
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "quick = only events on today (and leagues every few hours); full = everything unfinished"
+        default: "full"
   schedule:
     - cron: "*/10 13-23 * * 5,6,0"   # every 10 min, Fri-Sun 8am-6pm Central (event days)
     - cron: "0 0-3 * * 6,0"          # evening finishes Fri/Sat (UTC is a day ahead)
@@ -52,10 +56,11 @@ jobs:
         env:
           VEX_TOKEN: ${{ secrets.VEX_TOKEN }}
           SCHEDULE: ${{ github.event.schedule }}
+          MODE: ${{ github.event.inputs.mode }}
         run: |
           # The 10-minute event-day runs only re-pull events on today (and leagues
           # every few hours); the daily run and manual runs re-pull everything unfinished.
-          if [ "$SCHEDULE" = "17 9 * * *" ] || [ -z "$SCHEDULE" ]; then
+          if [ "$SCHEDULE" = "17 9 * * *" ] || { [ -z "$SCHEDULE" ] && [ "$MODE" != "quick" ]; }; then
             python -m vexpredict.fetch --season "$SEASON"
           else
             python -m vexpredict.fetch --season "$SEASON" --live-only
