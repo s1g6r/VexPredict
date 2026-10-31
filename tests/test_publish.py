@@ -121,9 +121,9 @@ def test_hub_files(published):
     season, out = published
     q = json.loads((out / "qualify.json").read_text())
     names = {t["name"] for t in q["targets"]}
-    assert {"Demo State Championship", "World Championship"} <= names
-    # every listed qualification is a real award win by that team
-    wins = {(a.event_id, t) for a in season.awards if a.qualifications for t in a.team_ids}
+    assert names == {"Region championship (States)", "World Championship"}
+    # every qualification is a real award win by that team
+    wins = {(a.event_id, t) for a in season.awards for t in a.team_ids}
     for tid, rec in q["teams"].items():
         assert season.teams[int(tid)].is_hs
         for r in rec["quals"]:
@@ -144,18 +144,44 @@ def test_hub_files(published):
 
 
 def test_qualification_labels():
-    """Event-code qualifications show the event's name; Middle School
-    championships listed by blended events don't count for High School teams."""
+    """Every qualification lands on States or Worlds: a state championship's
+    event code counts as States; Middle School and other championships don't
+    count for a High School team."""
     from vexpredict import hub
     from vexpredict.dataset import Award, Event, Season, Team
     s = Season(name="x")
     s.teams[1] = Team(1, "1A", grade="High School")
     s.events[5] = Event(5, "E5", "Local", 0.0, 0.0, "Other")
     s.calendar[9] = Event(9, "VE-V5-26-9", "Illinois State Championship (HS)", 0.0, 0.0, "Regional")
+    s.calendar[8] = Event(8, "VE-V5-26-8", "Illinois State Championship (MS)", 0.0, 0.0, "Regional")
     s.awards.append(Award(5, "Excellence Award (V5)", ("VE-V5-26-9", "Event Region Championship",
-                                                      "Illinois State Championship (MS)"), (1,)))
-    got = [r["target"] for r in hub.qualifications(s)[1]]
-    assert got == ["Illinois State Championship (HS)", "Region championship (States)"]
+                                                      "VE-V5-26-8", "JROTC National Championship"), (1,)))
+    got = [(r["target"], r["listed"]) for r in hub.qualifications(s)[1]]
+    assert got == [("Region championship (States)", True)]
+
+
+def test_unlisted_qualifications():
+    """When an event lists no qualifications at all, its Excellence, Tournament
+    Champions and Skills Champion winners qualify the usual way (local event to
+    States, Signature to Worlds); an event that lists some is taken as written."""
+    from vexpredict import hub
+    from vexpredict.dataset import Award, Event, Season, Team
+    s = Season(name="x")
+    for t in range(1, 7):
+        s.teams[t] = Team(t, f"{t}A", grade="High School")
+    s.events[1] = Event(1, "E1", "Local", 0.0, 0.0, "Other")
+    s.events[2] = Event(2, "E2", "Sig", 1.0, 1.0, "Signature")
+    s.events[3] = Event(3, "E3", "Listed", 2.0, 2.0, "Other")
+    s.events[4] = Event(4, "E4", "Scrimmage", 3.0, 3.0, "Other")
+    s.awards += [Award(1, "Excellence Award (V5)", (), (1,)), Award(1, "Tournament Champions (V5)", (), (2,)),
+                 Award(1, "Design Award (V5)", (), (3,)), Award(2, "Robot Skills Champion (V5)", (), (4,)),
+                 Award(3, "Excellence Award (V5)", ("Event Region Championship",), (5,)),
+                 Award(3, "Tournament Champions (V5)", (), (6,)), Award(4, "Excellence Award (V5)", (), (3,))]
+    q = hub.qualifications(s)
+    assert q[1] == [{"target": "Region championship (States)", "award": "Excellence Award", "event_id": 1,
+                     "listed": False, "event": "Local", "date": "1970-01-01"}]
+    assert q[2][0]["target"] == "Region championship (States)" and q[4][0]["target"] == "World Championship"
+    assert q[5][0]["listed"] and 3 not in q and 6 not in q
 
 
 def test_schedule_luck():

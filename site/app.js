@@ -626,22 +626,21 @@ async function myRegion() {
 }
 
 // ---------- qualification tracker ----------
+const Q_TARGETS = [["Region championship (States)", "States"], ["World Championship", "Worlds"]];
 async function qualifyPage() {
   setTitle("Qualification");
   const [q, sk] = await Promise.all([get(`${SEASON}/qualify.json`), get(`${SEASON}/skills.json`)]);
   const me = myTeam();
-  const state = { target: store.get("q:target", q.targets[0]?.name || ""), region: store.get("q:region", null) ?? await myRegion() };
+  const saved = store.get("q:target", "");
+  const state = { target: Q_TARGETS.some(([k]) => k === saved) ? saved : Q_TARGETS[0][0], region: store.get("q:region", null) ?? await myRegion() };
   const rowsAll = Object.entries(q.teams).map(([id, t]) => ({ id: +id, ...t }));
   for (const r of rowsAll) NUMBERS[r.id] = r.number;
   for (const r of sk) NUMBERS[r.id] = r.number;
-  const intro = `<h1>Who has qualified?</h1>
-    <p class="lede">Teams that have won an award that qualifies for a championship, straight from the official award results, plus the best teams in each region still without a spot.</p>`;
-  if (!q.targets.length) {
-    app.innerHTML = `${intro}<p class="callout">No qualifying awards have been recorded yet this season${q.events_with_awards ? ` (${q.events_with_awards} events have posted awards so far)` : ""}. This page fills in as events post their awards.</p>`;
-    return;
-  }
+  const count = k => q.targets.find(x => x.name === k)?.teams || 0;
+  const how = z => `${esc(z.award)}${z.listed === false ? `<sup class="star" title="Usual qualifying award; the event's record doesn't list it">*</sup>` : ""} · <a href="#/event/${z.event_id}">${esc(z.event)}</a>`;
   const draw = () => {
-    const t = state.target, r = state.region;
+    const t = state.target, r = state.region, short = Q_TARGETS.find(([k]) => k === t)[1];
+    for (const a of document.querySelectorAll("#qtabs a")) a.setAttribute("aria-current", a.dataset.t === t ? "page" : "false");
     const inR = x => !r || regionOf(x) === r;
     const qualified = rowsAll.filter(x => inR(x) && x.quals.some(z => z.target === t))
       .map(x => ({ ...x, mine: x.quals.filter(z => z.target === t) }))
@@ -649,40 +648,40 @@ async function qualifyPage() {
     const doubles = qualified.filter(x => new Set(x.mine.map(z => `${z.event_id}:${z.award}`)).size > 1);
     const qset = new Set(rowsAll.filter(x => x.quals.some(z => z.target === t)).map(x => x.id));
     const next = sk.filter(x => inR(x) && !qset.has(x.id));
+    const anyStar = qualified.some(x => x.mine.some(z => z.listed === false));
     const mine = me ? (() => {
       const meQ = rowsAll.find(x => x.id === me);
       const hit = meQ?.quals.filter(z => z.target === t) || [];
-      if (hit.length) return `<p class="callout good"><b>${esc(num(me))} has qualified</b> for ${esc(t)}: ${hit.map(z => `${esc(z.award)} at <a href="#/event/${z.event_id}">${esc(z.event)}</a>`).join("; ")}.</p>`;
+      if (hit.length) return `<p class="callout good"><b>${esc(num(me))} is qualified for ${short}</b> · ${hit.map(how).join("; ")}</p>`;
       const meSk = sk.find(x => x.id === me);
-      if (!meSk) return `<p class="callout">${esc(num(me))} hasn't qualified for ${esc(t)} and has no skills score posted yet.</p>`;
+      if (!meSk) return `<p class="callout">${esc(num(me))} isn't qualified for ${short} yet and has no skills score posted.</p>`;
       const pos = sk.filter(x => regionOf(x) === regionOf(meSk) && !qset.has(x.id)).findIndex(x => x.id === me) + 1;
-      return `<p class="callout">${esc(num(me))} hasn't qualified for ${esc(t)} yet. On skills (${meSk.score}) it is <b>#${pos}</b> among ${esc(regionOf(meSk))} teams without a spot.</p>`;
+      return `<p class="callout">${esc(num(me))} isn't qualified for ${short} yet. On skills (${meSk.score}) it is <b>#${pos}</b> among ${esc(regionOf(meSk))} teams without a spot.</p>`;
     })() : `<p class="muted">Open your team's page and choose "This is my team" to see your own status here.</p>`;
     $("#qbody").innerHTML = `${mine}
       <div class="stats">
-        <div class="stat"><b>${qualified.length}</b><span>${r ? esc(r) + " teams" : "teams"} qualified for ${esc(t)}</span></div>
-        <div class="stat"><b>${doubles.length}</b><span>with more than one qualifying award (their extra spots pass down)</span></div>
+        <div class="stat"><b>${qualified.length}</b><span>${r ? esc(r) + " teams" : "Teams"} qualified</span></div>
+        <div class="stat"><b>${doubles.length}</b><span>Double-qualified (extra spots pass down)</span></div>
       </div>
-      <h2>Qualified</h2>
-      ${qualified.length ? `<div class="panel tablewrap"><table><thead><tr><th>Team</th><th class="hide-m">Region</th><th>How</th><th class="n">Date</th></tr></thead><tbody>
-        ${qualified.map(x => `<tr class="${me === x.id ? "mine" : ""}"><td class="t">${teamLink(x.id)}<span class="subnote">${esc(x.name || "")}</span></td><td class="hide-m">${esc(regionOf(x))}</td>
-          <td>${x.mine.map(z => `${esc(z.award)} · <a href="#/event/${z.event_id}">${esc(z.event)}</a>`).join("<br>")}</td><td class="n">${x.mine[0].date.slice(5)}</td></tr>`).join("")}
-      </tbody></table></div>` : `<p class="empty">Nobody${r ? " in " + esc(r) : ""} has qualified for ${esc(t)} yet.</p>`}
-      <h2>Best skills without a spot</h2>
-      <p class="muted">${r ? esc(r) + " teams" : "Teams"} that haven't qualified for ${esc(t)}, by their best skills score. When a qualified team wins another qualifying award, or spots are left over, they have usually gone to the next teams on this list.</p>
+      <h2>Qualified for ${short}</h2>
+      ${qualified.length ? `<div class="panel tablewrap"><table class="qtable"><thead><tr><th>Team</th><th>How</th><th class="n">Date</th></tr></thead><tbody>
+        ${qualified.map(x => `<tr class="${me === x.id ? "mine" : ""}"><td class="t">${teamLink(x.id)}<span class="subnote">${esc(regionOf(x))}</span></td>
+          <td class="how">${x.mine.map(how).join("<br>")}</td><td class="n">${new Date(x.mine[0].date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</td></tr>`).join("")}
+      </tbody></table></div>${anyStar ? `<p class="muted small"><sup class="star">*</sup> The event hasn't marked which awards qualify, so these are its Excellence, Tournament Champions and Robot Skills Champion winners, the awards that qualify at almost every event.</p>` : ""}`
+      : `<p class="empty">Nobody${r ? " in " + esc(r) : ""} has qualified for ${short} yet.</p>`}
+      <h2>Next in line on skills</h2>
+      <p class="muted">${r ? esc(r) + " teams" : "Teams"} without a ${short} spot, by best skills score. Leftover and passed-down spots usually go down this list.</p>
       ${next.length ? `<div class="panel tablewrap"><table><thead><tr><th class="n">#</th><th>Team</th><th class="n">Skills</th><th class="n">Auto</th><th class="n">Driver</th><th class="n hide-m">World</th></tr></thead><tbody>
         ${next.slice(0, 25).map((x, i) => `<tr class="${me === x.id ? "mine" : ""}"><td class="n">${i + 1}</td><td class="t">${teamLink(x.id)}<span class="subnote">${esc(regionOf(x))}</span></td>
           <td class="n"><b>${x.score}</b></td><td class="n">${x.auto}</td><td class="n">${x.driver}</td><td class="n hide-m">#${x.rank}</td></tr>`).join("")}
       </tbody></table></div>` : `<p class="empty">No skills scores posted${r ? " in " + esc(r) : ""} yet.</p>`}
-      <p class="muted">Spots come from the qualifications VEX lists on each award. VEX hasn't published how many spots each region gets this season, so this page doesn't guess at cut-offs. Updated ${esc(q.updated)} from ${q.events_with_awards} events with posted awards.</p>`;
+      <p class="muted small">From official award results at ${q.events_with_awards} events, updated ${esc(q.updated)}. Spot counts per region aren't published, so no cut-off is guessed.</p>`;
   };
-  app.innerHTML = `${intro}
-    <div class="row" style="margin:14px 0">
-      <label class="sr" for="qt">Championship</label><select id="qt">${q.targets.map(x => `<option value="${esc(x.name)}" ${x.name === state.target ? "selected" : ""}>${esc(x.name)} (${x.teams})</option>`).join("")}</select>
-      <label class="sr" for="qr">Region</label><select id="qr">${regionOptions([...rowsAll, ...sk], state.region)}</select>
-    </div><div id="qbody"></div>`;
-  if (!q.targets.some(x => x.name === state.target)) state.target = q.targets[0].name;
-  $("#qt").onchange = e => { state.target = e.target.value; store.set("q:target", state.target); draw(); };
+  app.innerHTML = `<h1>Who has qualified?</h1>
+    <nav class="tabs" id="qtabs" aria-label="Championship">${Q_TARGETS.map(([k, l]) => `<a href="#/qualify" data-t="${esc(k)}">${l} <span class="tabcount">${count(k)}</span></a>`).join("")}</nav>
+    <div class="row" style="margin:0 0 14px"><label class="sr" for="qr">Region</label><select id="qr">${regionOptions([...rowsAll, ...sk], state.region)}</select></div>
+    <div id="qbody"></div>`;
+  for (const a of document.querySelectorAll("#qtabs a")) a.onclick = e => { e.preventDefault(); state.target = a.dataset.t; store.set("q:target", state.target); draw(); };
   $("#qr").onchange = e => { state.region = e.target.value; store.set("q:region", state.region); draw(); };
   draw();
 }

@@ -92,7 +92,11 @@ def test_every_page_renders_without_errors(server):
         page.goto(url + "#/qualify")
         page.wait_for_timeout(250)
         main = page.inner_text("main")
-        assert "Qualified" in main and "Best skills without a spot" in main
+        assert "Qualified for States" in main and "Next in line on skills" in main
+        page.click("#qtabs a[data-t='World Championship']")
+        page.wait_for_timeout(100)
+        assert "Qualified for Worlds" in page.inner_text("main")
+        page.click("#qtabs a[data-t='Region championship (States)']")
         page.select_option("#qr", "")
         page.wait_for_timeout(100)
         assert page.locator("#qbody table").count() == 2

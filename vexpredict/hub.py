@@ -1,7 +1,10 @@
 """Data for the hub tools beyond match prediction:
 
-  qualify.json  which High School teams have earned a spot at a championship,
-                from the "qualifications" the official award records list
+  qualify.json  which High School teams have earned a spot at Worlds or their
+                region championship (States), from the official award records:
+                the qualifications an award lists, or, at events whose records
+                list none, the Excellence, Tournament Champions and Robot
+                Skills Champion awards that qualify at almost every event
   skills.json   season skills standings (best single-event combined score)
                 with each team's qualification status, so "the best teams that
                 haven't qualified yet" is one filter away
@@ -10,7 +13,7 @@
                 "where should we compete?" planner
 
 All three are built only from published results; nothing here guesses spot
-counts or qualification rules.
+counts.
 """
 from __future__ import annotations
 
@@ -30,18 +33,40 @@ def _r(x, nd=1):
     return None if x is None else round(float(x), nd)
 
 
-GENERIC = {"Event Region Championship": "Region championship (States)"}
+WORLDS = "World Championship"
+REGION = "Region championship (States)"
+
+# Awards that qualify a team at almost every event when the organizer hasn't
+# typed the qualification into the award record (most don't).
+QUALIFYING_AWARDS = ("excellence award", "tournament champions", "robot skills champion")
 
 
-def target_namer(season: Season) -> Callable[[str], str]:
-    """An award's qualification is either a generic championship ("Event
-    Region Championship", "World Championship") or a specific event's code
-    (e.g. VE-V5-26-66512); show the event's name for the latter."""
-    by_sku = {ev.sku: ev.name for ev in season.calendar.values() if ev.sku}
+def target_namer(season: Season) -> Callable[[str], str | None]:
+    """Map an award's qualification to one of the two championships a High
+    School team is chasing: Worlds or its region championship (States, or the
+    equivalent: an Australian state championship, a national championship).
+    A qualification is either a generic string ("Event Region Championship")
+    or an event's code; anything else (JROTC, Middle School events) is None."""
+    by_sku = {ev.sku: ev for ev in season.calendar.values() if ev.sku}
+    by_sku.update({ev.sku: ev for ev in season.events.values() if ev.sku})
 
-    def name(q: str) -> str:
+    def name(q: str) -> str | None:
         q = " ".join(q.split())
-        return by_sku.get(q) or GENERIC.get(q, q)
+        low = q.lower()
+        if low == "world championship":
+            return WORLDS
+        if low in ("event region championship", "national championship"):
+            return REGION
+        ev = by_sku.get(q)
+        if ev is None or _middle_school(ev.name):
+            return None
+        lvl = (ev.level or "").lower()
+        if lvl == "world":
+            return WORLDS
+        n = ev.name.lower()
+        if lvl in ("regional", "national") or "state championship" in n or "national championship" in n:
+            return REGION
+        return None
     return name
 
 
@@ -50,23 +75,45 @@ def _middle_school(label: str) -> bool:
     return "(ms)" in low or "middle school" in low
 
 
+def _inferred_target(ev) -> str | None:
+    """Where an event's top awards usually send a team when the record says nothing."""
+    if ev is None or "scrimmage" in ev.name.lower():
+        return None
+    lvl = (ev.level or "").lower()
+    if lvl in ("other", "spotlight", ""):
+        return REGION
+    if lvl in ("signature", "regional", "national"):
+        return WORLDS
+    return None
+
+
 def qualifications(season: Season) -> dict[int, list[dict]]:
-    """team id -> the qualifying awards it has won (High School teams only)."""
+    """team id -> the championships it has earned a spot at (High School teams
+    only). Each record says whether the award record lists the qualification
+    ("listed") or it is the event's usual qualifying award ("listed": False)."""
     out: dict[int, list[dict]] = defaultdict(list)
-    _target_label = target_namer(season)
+    _target = target_namer(season)
+    listed_events = {a.event_id for a in season.awards if a.qualifications}
     for a in sorted(season.awards, key=lambda a: season.events[a.event_id].start if a.event_id in season.events else 0):
-        if not a.qualifications:
-            continue
         ev = season.events.get(a.event_id)
+        if _middle_school(a.name):
+            continue
+        if a.qualifications:
+            targets = {_target(q) for q in a.qualifications} - {None}
+            listed = True
+        elif a.event_id not in listed_events and a.name.lower().startswith(QUALIFYING_AWARDS):
+            targets = {_inferred_target(ev)} - {None}
+            listed = False
+        else:
+            continue
         for tid in a.team_ids:
             t = season.teams.get(tid)
             if not t or not t.is_hs:
                 continue
-            for q in a.qualifications:
-                label = _target_label(q)
-                if _middle_school(label):
-                    continue   # blended events list the MS championship too; not a High School team's spot
-                out[tid].append({"target": label, "award": a.name, "event_id": a.event_id,
+            for label in sorted(targets):
+                if any(r["target"] == label and r["event_id"] == a.event_id and r["award"] == a.name for r in out[tid]):
+                    continue
+                out[tid].append({"target": label, "award": a.name, "event_id": a.event_id, "listed": listed,
                                  "event": ev.name if ev else "", "date": _iso(ev.start) if ev else ""})
     return out
 
@@ -88,14 +135,14 @@ def qualify_data(season: Season, now_ts: float) -> dict:
     for recs in quals.values():
         for t in {r["target"] for r in recs}:
             counts[t] += 1
-    targets = sorted(counts, key=lambda t: (-counts[t], t))
+    targets = [t for t in (REGION, WORLDS) if t in counts] or [REGION, WORLDS]
     teams = {}
     for tid, recs in quals.items():
         tm = season.teams[tid]
         teams[str(tid)] = {"number": tm.number, "name": tm.name, "region": tm.region, "country": tm.country,
                            "quals": recs}
     awards_in = len({a.event_id for a in season.awards})
-    return {"targets": [{"name": t, "teams": counts[t]} for t in targets], "teams": teams,
+    return {"targets": [{"name": t, "teams": counts.get(t, 0)} for t in targets], "teams": teams,
             "events_with_awards": awards_in, "updated": _iso(now_ts)}
 
 
