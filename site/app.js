@@ -16,6 +16,7 @@ function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 async function get(path) {
+  if (window.__VP_DATA) { if (path in window.__VP_DATA) return window.__VP_DATA[path]; throw new Error(`Not in this demo: ${path}`); }
   if (cache.has(path)) return cache.get(path);
   const p = fetch(`data/${path}`).then(r => { if (!r.ok) throw new Error(`${r.status} ${path}`); return r.json(); });
   cache.set(path, p);
@@ -25,7 +26,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(`vp:${k}`); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(`vp:${k}`, JSON.stringify(v)); } catch { /* storage unavailable */ } },
 };
-const myTeam = () => store.get(`${SEASON}:me`, null);
+const myTeam = () => store.get(`${SEASON}:me`, window.__VP_DEMO_ME ?? null);
 const notes = () => store.get(`${SEASON}:notes`, {});
 function saveNote(id, note) { const n = notes(); if (!note.text && !note.tags.length) delete n[id]; else n[id] = note; store.set(`${SEASON}:notes`, n); }
 const pct = p => `${Math.round(p * 100)}%`;
@@ -406,8 +407,15 @@ async function teamPage(id) {
   };
   document.querySelectorAll("#tags .tag").forEach(b => b.onclick = () => { b.setAttribute("aria-pressed", b.getAttribute("aria-pressed") !== "true"); save(); });
   $("#nt").addEventListener("input", () => { $("#saved").textContent = "Saving…"; clearTimeout(window._nt); window._nt = setTimeout(save, 400); });
+  if (window.__VP_DATA) $("#exp").textContent = "Copy all notes";
   $("#exp").onclick = () => {
-    const blob = new Blob([JSON.stringify({ season: SEASON, notes: notes() }, null, 2)], { type: "application/json" });
+    const text = JSON.stringify({ season: SEASON, notes: notes() }, null, 2);
+    if (window.__VP_DATA) {
+      navigator.clipboard.writeText(text).then(() => { $("#saved").textContent = "Copied. Paste it to a teammate."; },
+        () => { $("#saved").textContent = "Copy isn't allowed here."; });
+      return;
+    }
+    const blob = new Blob([text], { type: "application/json" });
     const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `scouting-notes-${SEASON}.json` });
     a.click(); URL.revokeObjectURL(a.href);
   };

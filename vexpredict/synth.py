@@ -23,7 +23,7 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
     teams = []
     for i in range(n_teams):
         teams.append({
-            "id": 1000 + i, "number": f"{100 + i}{'ABCDE'[i % 5]}",
+            "id": 1000 + i, "number": f"D{100 + i}{'ABCDE'[i % 5]}",
             "grade": "High School" if rng.random() < 0.7 else "Middle School",
             "region": i % regions,
             "base": rng.lognormvariate(3.1, 0.45),     # ~22 points median contribution
@@ -47,7 +47,7 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
             start = t0 + (season_days + 20) * DAY
             pool = sorted(teams, key=lambda t: -strength(t, start))
             pool = [t for t in pool if t["grade"] == "High School"][:80]
-            name = "VEX Robotics World Championship - High School"
+            name = "Demo World Championship (synthetic)"
         else:
             start = t0 + rng.uniform(0, season_days) * DAY
             r = rng.randrange(regions)
@@ -55,7 +55,7 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
             local = rng.sample(by_region[r], min(len(by_region[r]), int(k * 0.85)))
             others = rng.sample(teams, k - len(local))
             pool = list({t["id"]: t for t in local + others}.values())
-            name = f"Synthetic Tournament {e}"
+            name = f"Demo Tournament {e}"
         end = start + DAY
         eid = 50000 + e
         matches, mid = [], 0
@@ -149,7 +149,7 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
                 skills.append({"team": {"id": t["id"], "name": t["number"]}, "type": "programming",
                                "score": max(0, int(rng.gauss(1.0 * st, 0.5 * st)))})
         rec = {
-            "event": {"id": eid, "sku": f"RE-V5RC-25-{eid}", "name": name, "start": _iso(start),
+            "event": {"id": eid, "sku": f"DEMO-{eid}", "name": name, "start": _iso(start),
                       "end": _iso(end), "level": "World" if worlds else "Other",
                       "divisions": [{"id": 1, "name": "Division 1"}]},
             "teams": [{"id": t["id"], "number": t["number"], "grade": t["grade"], "team_name": t["name"],
@@ -171,7 +171,7 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
             if rng.random() < 0.6:
                 skills.append({"team": {"id": t["id"], "name": t["number"]}, "type": "programming",
                                "score": max(0, int(rng.gauss(1.0 * st, 0.5 * st)))})
-        rec = {"event": {"id": eid, "sku": f"RE-V5RC-25-{eid}", "name": f"Skills Only {e}",
+        rec = {"event": {"id": eid, "sku": f"DEMO-{eid}", "name": f"Demo Skills Day {e}",
                          "start": _iso(start), "end": _iso(start), "level": "Other", "divisions": []},
                "teams": [{"id": t["id"], "number": t["number"], "grade": t["grade"]} for t in pool],
                "skills": skills, "matches": [], "final": True}
@@ -227,7 +227,7 @@ def add_upcoming(out: Path, after_ts: float, teams: list[dict], n: int = 36, see
     eid = 90000
     pool = rng.sample(teams, n)
     start = after_ts + 10 * DAY
-    rec = {"event": {"id": eid, "sku": f"RE-V5RC-26-{eid}", "name": "Demo Invitational (upcoming)",
+    rec = {"event": {"id": eid, "sku": f"DEMO-{eid}", "name": "Demo Invitational (upcoming)",
                      "start": _iso(start), "end": _iso(start + DAY), "level": "Other",
                      "divisions": [{"id": 1, "name": "Division 1"}]},
            "teams": [{"id": t["id"], "number": t["number"], "grade": t["grade"], "team_name": t["name"],

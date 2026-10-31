@@ -53,9 +53,10 @@ h3 { font-size: 19px; margin: 20px 0 8px; }
 
 /* header */
 .top {
-  position: sticky; top: 0; z-index: 10; display: grid; gap: 8px 16px;
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; display: grid; gap: 8px 16px;
   grid-template-columns: auto 1fr; grid-template-areas: "brand nav" "search search";
-  align-items: center; padding: 10px 16px; background: var(--surface);
+  align-items: center; padding-block: 10px; background: var(--surface);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
   border-bottom: 1px solid var(--seam);
 }
 @media (min-width: 760px) { .top { grid-template-columns: auto minmax(220px, 420px) 1fr; grid-template-areas: "brand search nav"; } }
@@ -82,9 +83,12 @@ h3 { font-size: 19px; margin: 20px 0 8px; }
 .suggest small { color: var(--ink-2); }
 
 .demo { background: var(--warn); color: var(--surface); padding: 8px 16px; font-weight: 700; text-align: center; }
-main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+main { max-width: 960px; margin: 0 auto; padding-block: 24px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--surface); }
 main:focus, main:focus-visible { outline: none; }
-.foot { max-width: 960px; margin: 0 auto; padding: 16px 16px 40px; color: var(--ink-2); font-size: 14px; }
+.foot { max-width: 960px; margin: 0 auto; padding-block: 16px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); color: var(--ink-2); font-size: 14px; }
 
 /* panels sit on the field like a placed element */
 .panel { background: var(--surface); border: 1px solid var(--seam); border-radius: 10px; padding: 16px; margin: 12px 0; }
