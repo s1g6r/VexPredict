@@ -5,10 +5,11 @@ name: Update predictions
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "*/10 13-23 * * 5,6,0"   # every 10 min, Fri-Sun 8am-6pm Central (event days)
-    - cron: "0 0-3 * * 6,0"          # evening finishes Fri/Sat (UTC is a day ahead)
-    - cron: "17 9 * * *"             # once a day otherwise
+  # Turn on once the repo is public (GitHub Pages needs a public repo on the free plan):
+  # schedule:
+  #   - cron: "*/10 13-23 * * 5,6,0"   # every 10 min, Fri-Sun 8am-6pm Central (event days)
+  #   - cron: "0 0-3 * * 6,0"          # evening finishes Fri/Sat (UTC is a day ahead)
+  #   - cron: "17 9 * * *"             # once a day otherwise
 
 permissions:
   contents: read

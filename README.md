@@ -80,18 +80,23 @@ ratings, rating uncertainty, a fitted score-noise model, and V5RC ranking rules:
 WP (win 2, tie 1, plus autonomous win points), then AP, then SP. Autonomous
 tendencies come from each team's earlier events.
 
+## Getting the real Push Back numbers (no laptop needed)
+
+The repo's **Backtest** workflow does the whole thing on GitHub's machines:
+
+1. Repo **Settings → Secrets and variables → Actions → New repository secret**, name `VEX_TOKEN`, value: the token from VexCompare's `.env`.
+2. That's it. Within 2 hours the workflow starts on its own (or press **Actions → Backtest → Run workflow**). It pulls every Push Back event, resumes across runs if the pull is long, runs the backtest and simulator check, commits `reports/push-back/`, and then switches its own schedule off.
+
 ## Going live at stats.2360arachnid.com
 
-1. Push this repo to GitHub.
-2. Add the secret: repo **Settings → Secrets and variables → Actions → New secret**, name `VEX_TOKEN`.
-3. **Settings → Pages → Source: GitHub Actions.**
-4. Commit `reports/push-back/metrics.json` and `simcheck.json` after running the backtest, so Override predictions use the settings tuned on Push Back.
-5. DNS: add a `CNAME` record `stats` pointing to `<github-username>.github.io` (`site/CNAME` already says `stats.2360arachnid.com`).
-6. Run **Actions → Update predictions → Run workflow** once.
+1. Make the repo public (free GitHub Pages needs it), then **Settings → Pages → Source: GitHub Actions**.
+2. Uncomment the `schedule:` block in `.github/workflows/update.yml`.
+3. DNS: add a `CNAME` record `stats` pointing to `s1g6r.github.io` (`site/CNAME` already says `stats.2360arachnid.com`).
+4. Run **Actions → Update predictions → Run workflow** once.
 
-After that, `.github/workflows/update.yml` re-pulls and republishes every
-10 minutes Friday to Sunday (tournament days) and daily otherwise. The API
-token stays in GitHub's secret store and never reaches the site.
+After that, the site re-pulls and republishes every 10 minutes Friday to
+Sunday (tournament days) and daily otherwise, using the settings the Push Back
+backtest tuned. The API token stays in GitHub's secret store and never reaches the site.
 
 ## Roadmap
 

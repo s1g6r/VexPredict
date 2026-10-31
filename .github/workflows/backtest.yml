@@ -1,0 +1,96 @@
+# Pulls a past season, runs the backtest and the simulator check, and commits
+# the reports to reports/<season>/. Checks every 2 hours but exits immediately
+# until the VEX_TOKEN secret exists, and switches itself off once the reports
+# are committed.
+# Long pulls resume: downloaded events are cached between runs.
+name: Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season name"
+        default: "Push Back"
+  schedule:
+    - cron: "23 */2 * * *"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: backtest
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    env:
+      SEASON: ${{ github.event.inputs.season || 'Push Back' }}
+      VEX_TOKEN: ${{ secrets.VEX_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check whether there is anything to do
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          slug=$(python3 -c "import re,os;print(re.sub(r'[^a-z0-9]+','-',os.environ['SEASON'].lower()).strip('-'))")
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          if [ -z "$VEX_TOKEN" ]; then echo "VEX_TOKEN secret not set yet; nothing to do."; echo "run=no" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "schedule" ] && [ -f "reports/$slug/simcheck.json" ]; then echo "Reports already committed."; echo "run=no" >> "$GITHUB_OUTPUT"
+            gh workflow disable backtest.yml || true
+          else echo "run=yes" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.gate.outputs.run == 'yes'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - if: steps.gate.outputs.run == 'yes'
+        run: pip install -r requirements.txt
+      - if: steps.gate.outputs.run == 'yes'
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw
+          key: raw-${{ steps.gate.outputs.slug }}-${{ github.run_id }}
+          restore-keys: raw-${{ steps.gate.outputs.slug }}-
+      - name: Pull the season (resumes from the cache)
+        if: steps.gate.outputs.run == 'yes'
+        id: pull
+        timeout-minutes: 290
+        run: python -m vexpredict.fetch --season "$SEASON"
+      - name: Save downloaded events even if the pull was cut short
+        if: always() && steps.gate.outputs.run == 'yes'
+        uses: actions/cache/save@v4
+        with:
+          path: data/raw
+          key: raw-${{ steps.gate.outputs.slug }}-${{ github.run_id }}
+      - name: Backtest and simulator check
+        if: steps.gate.outputs.run == 'yes' && steps.pull.outcome == 'success'
+        run: |
+          python -m vexpredict.backtest --season "$SEASON"
+          python -m vexpredict.simcheck --season "$SEASON"
+          python - <<'PY'
+          import json, os, re
+          slug = re.sub(r'[^a-z0-9]+', '-', os.environ['SEASON'].lower()).strip('-')
+          from vexpredict.dataset import load_season
+          s = load_season(slug)
+          info = {"events": len(s.events), "matches": len(s.matches), "teams": len(s.teams),
+                  "hs_teams": sum(t.is_hs for t in s.teams.values()),
+                  "events_with_rankings": len(s.rankings), "skills_results": len(s.skills)}
+          open(f"reports/{slug}/data_summary.json", "w").write(json.dumps(info, indent=2))
+          print(info)
+          PY
+      - name: Commit reports
+        if: steps.gate.outputs.run == 'yes' && steps.pull.outcome == 'success'
+        run: |
+          git config user.name "Sagar Raut"
+          git config user.email "rs1g6r@gmail.com"
+          git add reports/
+          git diff --cached --quiet || git commit -m "Backtest reports: $SEASON"
+          git push
+      - name: Switch off the schedule now that the reports exist
+        if: steps.gate.outputs.run == 'yes' && steps.pull.outcome == 'success' && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow disable backtest.yml
