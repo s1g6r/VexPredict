@@ -36,7 +36,9 @@ def test_live_event_has_pending_predictions_and_sim(published):
     ev = json.loads((out / "events" / "50050.json").read_text())
     assert ev["status"] == "live" and ev["pending"] and "sim_live" in ev
     total = sum(v["p_captain"] for v in ev["sim_live"]["teams"].values())
-    assert total == pytest.approx(ev["sim_live"]["captains"], abs=0.05)
+    assert total == pytest.approx(sum(ev["sim_live"]["by_div"].values()), abs=0.05)
+    if len(ev.get("divisions", [])) > 1:   # synthetic Worlds: each division ranks separately
+        assert {v["div"] for v in ev["sim_live"]["teams"].values()} == {d["id"] for d in ev["divisions"]}
     up = json.loads((out / "events" / "90000.json").read_text())
     assert up["status"] == "upcoming" and "sim_pre" in up and not up["matches"]
 

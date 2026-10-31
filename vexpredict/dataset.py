@@ -59,6 +59,7 @@ class Event:
     start: float
     end: float
     level: str
+    divisions: tuple[tuple[int, str], ...] = ()   # (id, name) as listed by the API
 
     @property
     def is_worlds(self) -> bool:
@@ -214,21 +215,39 @@ def _event_matches(raw: list[dict], event_start: float, event_end: float | None 
             "time": _ts(m.get("started")) or _ts(m.get("scheduled")),
             "red": red[0], "blue": blue[0], "red_score": red[1], "blue_score": blue[1],
         })
-    # Use real start times when every match has one; otherwise the canonical
-    # order (all quals, then R16 -> QF -> SF -> F). Timestamps are then forced
-    # to be monotone along that order so ordering is never ambiguous.
+    # Order: real start times where the API has them. A match with no time
+    # gets the time of the next timed match in its division (canonical order:
+    # quals, then R16 -> QF -> SF -> F), or the event end if none follows: never
+    # earlier than when it was really played, so nothing leaks backwards in
+    # time. With no times at all the canonical order is used from the start.
     canon = lambda r: (ROUND_ORDER[r["round"]], r["division_id"], r["instance"], r["matchnum"])  # noqa: E731
     dated = True
-    if rows and all(r["time"] is not None for r in rows):
+    timed = sum(r["time"] is not None for r in rows)
+    long_event = event_end is not None and event_end - event_start > LONG_EVENT
+    if rows and long_event and timed < 0.5 * len(rows):
+        # A league or other multi-week event without (most) match times: put
+        # all of it at the end of the event and leave it out of the accuracy
+        # numbers.
+        for r in rows:
+            r["time"] = None
+        rows.sort(key=canon)
+        event_start, dated = event_end, False
+    elif timed:
+        end = max(event_end or event_start, max(r["time"] for r in rows if r["time"] is not None)) + 1.0
+        by_div: dict[int, list[dict]] = {}
+        for r in rows:
+            by_div.setdefault(r["division_id"], []).append(r)
+        for drows in by_div.values():
+            drows.sort(key=lambda r: (ROUND_ORDER[r["round"]], r["instance"], r["matchnum"]))
+            nxt = end
+            for r in reversed(drows):
+                if r["time"] is None:
+                    r["time"] = nxt
+                else:
+                    nxt = min(nxt, r["time"])
         rows.sort(key=lambda r: (r["time"],) + canon(r))
     else:
         rows.sort(key=canon)
-        # A league or other multi-week event without match times: we can't tell
-        # when each match happened, so put them all at the end of the event
-        # (never earlier than reality, so nothing leaks backwards in time) and
-        # leave them out of the accuracy numbers.
-        if event_end is not None and event_end - event_start > LONG_EVENT:
-            event_start, dated = event_end, False
     prev = event_start
     for r in rows:
         t = r["time"] if r["time"] is not None and r["time"] >= prev else prev + 1.0
@@ -256,7 +275,9 @@ def load_season(slug: str, root: Path | None = None) -> Season:
         e = rec["event"]
         start = _ts(e.get("start")) or 0.0
         end = _ts(e.get("end")) or start
-        ev = Event(e["id"], e.get("sku", ""), e.get("name", ""), start, end, e.get("level") or "")
+        divs = tuple((d["id"], d.get("name") or f"Division {d['id']}") for d in e.get("divisions") or []
+                     if d.get("id") is not None)
+        ev = Event(e["id"], e.get("sku", ""), e.get("name", ""), start, end, e.get("level") or "", divs)
         season.events[ev.id] = ev
         for t in rec.get("teams") or []:
             loc = t.get("location") or {}

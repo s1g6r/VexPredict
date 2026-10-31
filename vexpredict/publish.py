@@ -122,6 +122,31 @@ def run_sim(season: Season, teams: list[int], rating: dict[int, float], played_n
                                "auton": _r(rates.ap_share.get(t, 0.5), 3)} for t in teams}}
 
 
+def _merge(sims: list[tuple[int, dict]]) -> dict | None:
+    """One forecast object for the event: each division is simulated on its
+    own (divisions rank and pick alliances separately), then merged with every
+    team tagged by division and the captain count kept per division."""
+    if not sims:
+        return None
+    out = {"captains": sims[0][1]["captains"] if len(sims) == 1 else None,
+           "by_div": {str(d): s["captains"] for d, s in sims}, "teams": {}, "rates": {}}
+    for d, s in sims:
+        for t, v in s["teams"].items():
+            out["teams"][t] = {**v, "div": d}
+        out["rates"].update(s["rates"])
+    return out
+
+
+def _qual_groups(ms: list[Match], pend) -> dict[int, list]:
+    groups: dict[int, list] = defaultdict(list)
+    for m in ms:
+        if m.is_qual:
+            groups[m.division_id].append(m)
+    for p in pend:
+        groups[p.division_id].append(p)
+    return groups
+
+
 def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | None = None,
             tune_from: str | None = None) -> Path:
     out = (out or SITE_DATA) / slug
@@ -181,9 +206,14 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
     for eid, (teams, rating, pn, std, ts) in snaps.items():
         # The qualification schedule is published when quals start, so the
         # "before the first match" forecast can use the real schedule.
-        sched = [(m.red, m.blue) for m in by_event[eid] if m.is_qual]
-        sched += [(p.red, p.blue) for p in season.pending.get(eid, [])]
-        pre_event[eid] = run_sim(season, teams, rating, pn, std, noise, u0, ts, eid, played=[], remaining=sched)
+        sims = []
+        for did, group in sorted(_qual_groups(by_event[eid], season.pending.get(eid, [])).items()):
+            dteams = sorted({t for x in group for t in x.teams})
+            if len(dteams) < 4:
+                continue
+            sims.append((did, run_sim(season, dteams, rating, pn, std, noise, u0, ts, eid * 100 + did, played=[],
+                                      remaining=[(x.red, x.blue) for x in group])))
+        pre_event[eid] = _merge(sims)
 
     now_ts = now_ts if now_ts is not None else dt.datetime.now(dt.timezone.utc).timestamp()
     current = dict(model.e)
@@ -209,6 +239,17 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
         rec = {"id": eid, "sku": ev.sku, "name": ev.name, "date": _iso(ev.start), "status": status,
                "worlds": ev.is_worlds, "teams": [], "matches": [], "pending": []}
         ranks = season.rankings.get(eid, {})
+        # each team's division: from the rankings, else from its qualification matches
+        div_of = {t: r.division_id for t, r in ranks.items() if r.division_id}
+        for x in [m for m in ms if m.is_qual] + list(pend):
+            for t in x.teams:
+                div_of.setdefault(t, x.division_id)
+        used = sorted(set(div_of.values()) | {m.division_id for m in ms})
+        if len(used) > 1:
+            names = dict(ev.divisions)
+            qual_divs = set(div_of.values())
+            rec["divisions"] = [{"id": d, "name": names.get(d, f"Division {d}"), **({} if d in qual_divs else {"finals": True})}
+                                for d in used]
         skills_best = {}
         for s in season.skills:
             if s.event_id == eid:
@@ -218,7 +259,7 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
             r = ranks.get(t)
             rec["teams"].append({
                 "id": t, "number": tm.number if tm else str(t), "name": tm.name if tm else "",
-                "hs": bool(tm and tm.is_hs),
+                "hs": bool(tm and tm.is_hs), "div": div_of.get(t),
                 "rating_pre": _r(snaps[eid][1].get(t)) if eid in snaps else None,
                 "rating_now": _r(rating_now(t)),
                 "skills": skills_best.get(t),
@@ -228,10 +269,10 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
             })
         for m in ms:
             p = preds[m.idx]
-            rec["matches"].append({"round": m.round, "inst": m.instance, "num": m.matchnum,
+            rec["matches"].append({"round": m.round, "inst": m.instance, "num": m.matchnum, "div": m.division_id,
                                    "red": list(m.red), "blue": list(m.blue), "rs": m.red_score, "bs": m.blue_score,
                                    "p": _r(p["p"], 3), "pr": _r(p["r"]), "pb": _r(p["b"])})
-        if eid in pre_event:
+        if pre_event.get(eid):
             rec["sim_pre"] = pre_event[eid]
         if pend:
             pend_rating = {t: rating_now(t) for t in teams}
@@ -239,15 +280,26 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
                 r_ = sum(pend_rating[t] for t in p.red)
                 b_ = sum(pend_rating[t] for t in p.blue)
                 pr = 1 / (1 + math.exp(-(r_ - b_) / (model.prob_k * model.scale.std)))
-                rec["pending"].append({"num": p.matchnum, "red": list(p.red), "blue": list(p.blue),
+                rec["pending"].append({"num": p.matchnum, "div": p.division_id, "red": list(p.red), "blue": list(p.blue),
                                        "p": _r(pr, 3), "pr": _r(r_), "pb": _r(b_)})
-            qual_teams = sorted({t for p in pend for t in p.teams} | {t for m in ms if m.is_qual for t in m.teams})
-            rec["sim_live"] = run_sim(season, qual_teams, pend_rating, played_n, model.scale.std, noise, u0, now_ts,
-                                      eid, played=[m for m in ms if m.is_qual],
-                                      remaining=[(p.red, p.blue) for p in pend], live_rankings=ranks or None)
+            live = []
+            for did, group in sorted(_qual_groups(ms, pend).items()):
+                dpend = [x for x in group if not isinstance(x, Match)]
+                if not dpend:          # this division's quals are over
+                    continue
+                dplayed = [x for x in group if isinstance(x, Match)]
+                qual_teams = sorted({t for x in group for t in x.teams})
+                dranks = {t: r for t, r in ranks.items() if r.division_id in (did, 0)}
+                live.append((did, run_sim(season, qual_teams, pend_rating, played_n, model.scale.std, noise, u0,
+                                          now_ts, eid * 100 + did, played=dplayed,
+                                          remaining=[(p.red, p.blue) for p in dpend], live_rankings=dranks or None)))
+            if live:
+                rec["sim_live"] = _merge(live)
+        elif status == "upcoming" and len(ev.divisions) > 1:
+            rec["divisions_pending"] = True   # teams aren't split into divisions until the schedule is out
         elif status == "upcoming" and len(teams) >= 8:
-            rec["sim_pre"] = run_sim(season, teams, {t: rating_now(t) for t in teams}, played_n,
-                                     model.scale.std, noise, u0, now_ts, eid, played=[])
+            rec["sim_pre"] = _merge([(0, run_sim(season, teams, {t: rating_now(t) for t in teams}, played_n,
+                                                 model.scale.std, noise, u0, now_ts, eid, played=[]))])
         _write(out / "events" / f"{eid}.json", rec)
         index.append({"id": eid, "sku": ev.sku, "name": ev.name, "date": _iso(ev.start), "status": status,
                       "teams": len(teams), "hs_teams": len(hs), "matches": len(ms), "worlds": ev.is_worlds})

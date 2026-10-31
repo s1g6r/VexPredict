@@ -197,6 +197,19 @@ async function eventsPage() {
   $("#evq").addEventListener("input", draw); $("#evs").addEventListener("change", draw); draw();
 }
 
+// Big events (Worlds, some Signature events and States) split into divisions
+// that rank and pick alliances separately; show one division at a time.
+function subSim(sim, d) {
+  if (!sim) return sim;
+  const t = Object.fromEntries(Object.entries(sim.teams).filter(([, v]) => v.div == null || v.div === d));
+  if (!Object.keys(t).length) return null;
+  return { ...sim, teams: t, captains: sim.by_div?.[d] ?? sim.captains };
+}
+function divisionView(ev, d) {
+  const inD = x => x.div == null || x.div === d;
+  return { ...ev, teams: ev.teams.filter(inD), matches: ev.matches.filter(inD), pending: ev.pending.filter(inD),
+           sim_pre: subSim(ev.sim_pre, d), sim_live: subSim(ev.sim_live, d), pickKey: `${SEASON}:picks:${ev.id}:${d}` };
+}
 async function eventPage(id, tab) {
   const ev = await get(`${SEASON}/events/${id}.json`);
   setTitle(ev.name);
@@ -204,27 +217,40 @@ async function eventPage(id, tab) {
   for (const t of ev.teams) NUMBERS[t.id] = t.number;
   const me = myTeam();
   const iAmHere = me && teams.has(me);
+  const divs = ev.divisions || [];
+  const divKey = `${SEASON}:div:${ev.id}`;
+  let d = null, view = ev;
+  if (divs.length > 1) {
+    d = store.get(divKey, null) ?? (iAmHere ? teams.get(me).div : null) ?? divs[0].id;
+    if (!divs.some(x => x.id === d)) d = divs[0].id;
+    view = divisionView(ev, d);
+  }
   const tabs = [["matches", "Matches"], ["forecast", "Ranking forecast"], ["picks", "Pick list"], ["teams", "Teams"]];
   if (iAmHere) tabs.splice(1, 0, ["brief", `Brief for ${num(me)}`]);
-  const played = ev.matches.length, left = ev.pending.length;
+  const played = view.matches.length, left = view.pending.length;
   app.innerHTML = `
     <div class="row"><a href="#/events">Events</a>${statusPill(ev.status)}</div>
     <h1 style="margin-top:8px">${esc(ev.name)}</h1>
+    ${d != null ? `<div class="row divpick"><label for="div">Division</label><select id="div">${divs.map(x =>
+      `<option value="${x.id}" ${x.id === d ? "selected" : ""}>${esc(x.name)}${x.finals ? " (finals between divisions)" : ""}${iAmHere && teams.get(me).div === x.id ? ` (${esc(num(me))})` : ""}</option>`).join("")}</select>
+      <span class="muted">${divs.filter(x => !x.finals).length} divisions rank and pick alliances separately</span></div>` : ""}
     <div class="stats">
-      <div class="stat"><b>${ev.teams.length}</b><span>teams</span></div>
+      <div class="stat"><b>${view.teams.length}</b><span>teams${d != null ? " in this division" : ""}</span></div>
       <div class="stat"><b>${played}</b><span>matches played</span></div>
       ${left ? `<div class="stat"><b>${left}</b><span>qualification matches left</span></div>` : ""}
-      ${played ? `<div class="stat"><b>${hitRate(ev.matches)}</b><span>of results called correctly</span></div>` : ""}
+      ${played ? `<div class="stat"><b>${hitRate(view.matches)}</b><span>of results called correctly</span></div>` : ""}
     </div>
     <p class="muted">${ev.date} · ${esc(ev.sku)}</p>
     <nav class="tabs" aria-label="Event sections">${tabs.map(([k, l]) => `<a href="#/event/${id}/${k}" ${k === tab ? 'aria-current="page"' : ""}>${esc(l)}</a>`).join("")}</nav>
     <div id="tab"></div>`;
+  const sel = $("#div");
+  if (sel) sel.onchange = () => { store.set(divKey, +sel.value); eventPage(id, tab); };
   const el = $("#tab");
-  if (tab === "forecast") return forecastTab(el, ev, teams);
-  if (tab === "picks") return picksTab(el, ev, teams);
-  if (tab === "teams") return teamsTab(el, ev);
-  if (tab === "brief") return briefTab(el, ev, teams);
-  return matchesTab(el, ev);
+  if (tab === "forecast") return forecastTab(el, view, teams);
+  if (tab === "picks") return picksTab(el, view, teams);
+  if (tab === "teams") return teamsTab(el, view);
+  if (tab === "brief") return briefTab(el, ev, teams);   // your matches, whatever division is on screen
+  return matchesTab(el, view);
 }
 function hitRate(ms) {
   const d = ms.filter(m => m.rs !== m.bs && m.p != null);
@@ -252,7 +278,12 @@ function matchesTab(el, ev) {
 }
 function forecastTab(el, ev, teams) {
   const sim = ev.sim_live || ev.sim_pre;
-  if (!sim) { el.innerHTML = `<p class="empty">No forecast for this event: it needs at least 8 teams with a schedule or a registered team list.</p>`; return; }
+  if (!sim) {
+    el.innerHTML = `<p class="empty">${ev.divisions_pending ? "No forecast yet: this event splits into divisions, and teams aren't assigned to one until the schedule is out."
+      : ev.divisions?.length > 1 && !ev.teams.length ? "These are the finals between division winners, so there are no rankings to forecast."
+      : "No forecast for this event: it needs at least 8 teams with a schedule or a registered team list."}</p>`;
+    return;
+  }
   const live = !!ev.sim_live;
   const done = ev.status === "done";
   const rows = Object.entries(sim.teams).map(([id, s]) => ({ id: +id, ...s, t: teams.get(+id) || {} }))
@@ -319,7 +350,7 @@ function briefTab(el, ev, teams) {
 
 // ---------- pick list ----------
 function picksTab(el, ev, teams) {
-  const key = `${SEASON}:picks:${ev.id}`;
+  const key = ev.pickKey || `${SEASON}:picks:${ev.id}`;
   const state = store.get(key, { picked: [], dnp: [], w: 0.25 });
   const sim = ev.sim_live || ev.sim_pre || { rates: {} };
   const me = myTeam();

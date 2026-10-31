@@ -39,6 +39,7 @@ def test_every_page_renders_without_errors(server):
     import json
     ev = json.loads((root / "data" / "t" / "events" / "50040.json").read_text())
     me = ev["pending"][0]["red"][0]
+    num_me = next(t["number"] for t in ev["teams"] if t["id"] == me)
     pages = ["#/", "#/events", "#/leaderboard", "#/accuracy", "#/event/50040/matches", "#/event/50040/forecast",
              "#/event/50040/picks", "#/event/50040/teams", "#/event/50040/brief", "#/event/90000/forecast",
              "#/event/50000/forecast", f"#/team/{me}", "#/nope"]
@@ -65,6 +66,22 @@ def test_every_page_renders_without_errors(server):
         page.wait_for_timeout(100)
         assert page.locator("tbody tr").first.locator("td.t a").inner_text() != first
         assert page.locator("tbody tr.picked td.t a").inner_text() == first
+        # divisions: the event opens on my team's division; switching shows the other division's teams
+        page.goto(url + "#/event/50040/forecast")
+        page.wait_for_timeout(200)
+        sel = page.locator("#div")
+        assert sel.count() == 1
+        mine = sel.input_value()
+        before = set(page.locator("tbody td.t a").all_inner_texts())
+        assert num_me in before
+        other = [o for o in page.locator("#div option").evaluate_all("os => os.map(o => o.value)") if o != mine][0]
+        sel.select_option(other)
+        page.wait_for_timeout(200)
+        after = set(page.locator("tbody td.t a").all_inner_texts())
+        assert after and not (after & before)
+        sel = page.locator("#div")
+        sel.select_option(mine)
+        page.wait_for_timeout(200)
         # home shows the next match for my team
         page.goto(url + "#/")
         page.wait_for_timeout(200)

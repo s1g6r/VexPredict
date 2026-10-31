@@ -26,8 +26,8 @@ def test_loader_orders_and_counts(season):
     assert ts == sorted(ts)
     assert [m.idx for m in season.matches] == list(range(len(season.matches)))
     assert len(season.matches) > 3000
-    for eid in {m.event_id for m in season.matches}:
-        rounds = [m.round for m in season.matches if m.event_id == eid]
+    for key in {(m.event_id, m.division_id) for m in season.matches}:
+        rounds = [m.round for m in season.matches if (m.event_id, m.division_id) == key]
         first_elim = next((i for i, r in enumerate(rounds) if r != 2), len(rounds))
         assert all(r == 2 for r in rounds[:first_elim]) and all(r != 2 for r in rounds[first_elim:])
     assert any(season.events[e].is_worlds for e in season.events)
@@ -170,3 +170,31 @@ def test_undated_league_matches_go_to_event_end(tmp_path):
     assert s.matches[0].dated and not s.matches[1].dated
     recs = backtest.run(TrueSkill(), s)
     assert [r.m.event_id for r in recs] == [2]
+
+
+def test_missing_times_take_the_next_timed_match_in_their_division(tmp_path):
+    """A few untimed matches must not sink a timed multi-day event (Worlds has
+    2 of ~3000), and an untimed match is never placed before it really happened."""
+    import json
+
+    def match(n, rnd, div, started):
+        al = lambda color, ids, s: {"color": color, "score": s,  # noqa: E731
+                                    "teams": [{"team": {"id": i}, "sitting": False} for i in ids]}
+        return {"round": rnd, "instance": 1, "matchnum": n, "division": {"id": div}, "started": started,
+                "alliances": [al("red", (1, 2) if div == 1 else (5, 6), 30), al("blue", (3, 4) if div == 1 else (7, 8), 20)]}
+
+    teams = [{"id": i, "number": f"{i}A", "grade": "High School"} for i in range(1, 9)]
+    ms = [match(1, 2, 1, "2026-04-21T15:00:00Z"), match(2, 2, 1, None), match(3, 2, 1, "2026-04-22T15:00:00Z"),
+          match(1, 2, 2, "2026-04-21T16:00:00Z"), match(1, 3, 2, None)]
+    (tmp_path / "events").mkdir()
+    (tmp_path / "events" / "1.json").write_text(json.dumps({
+        "event": {"id": 1, "sku": "W", "name": "Worlds", "start": "2026-04-21T00:00:00Z",
+                  "end": "2026-04-24T00:00:00Z", "level": "World"},
+        "teams": teams, "skills": [], "matches": ms, "rankings": []}))
+    s = load_season("x", root=tmp_path)
+    assert all(m.dated for m in s.matches)
+    order = [(m.division_id, m.round, m.matchnum) for m in s.matches]
+    # div 1 Q2 sits with div 1 Q3 (next day), not before div 2's match on day one;
+    # div 2's untimed elim goes to the end of the event
+    assert order == [(1, 2, 1), (2, 2, 1), (1, 2, 2), (1, 2, 3), (2, 3, 1)]
+    assert len(backtest.run(TrueSkill(), s)) == 5

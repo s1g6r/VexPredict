@@ -71,7 +71,7 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
             mid += 1
             started = None if rng.random() < missing_times else _iso(ts)
             matches.append({
-                "id": eid * 1000 + mid, "division": {"id": 1}, "round": rnd, "instance": inst,
+                "id": eid * 1000 + mid, "division": {"id": div}, "round": rnd, "instance": inst,
                 "matchnum": num, "scheduled": None, "started": started, "scored": False,  # the real API reports false even for played matches
                 "alliances": [
                     {"color": "red", "score": sc[0], "teams": [{"team": {"id": t["id"], "name": t["number"]}, "sitting": False} for t in red]},
@@ -80,63 +80,66 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
             return sc
 
         ts = start + 3600
-        per_team = 8
-        slots = []
-        for _ in range(per_team):
-            order = pool[:]
-            rng.shuffle(order)
-            slots.extend(order)
-        num = 0
-        for i in range(0, len(slots) - 3, 4):
-            four = slots[i:i + 4]
-            if len({t["id"] for t in four}) < 4:
-                continue
-            num += 1
-            red, blue = four[:2], four[2:]
-            s = play(red, blue, 2, 1, num, ts)
-            ts += 420
-            # autonomous bonus (AP) to the alliance with better autons; AWP per team
-            ra = sum(t["auton"] for t in red) + rng.gauss(0, 0.4)
-            ba = sum(t["auton"] for t in blue) + rng.gauss(0, 0.4)
-            ap_red, ap_blue = (10, 0) if ra > ba else (0, 10)
-            for al, mine, theirs, ap in ((red, s[0], s[1], ap_red), (blue, s[1], s[0], ap_blue)):
-                for t in al:
-                    st = stats[t["id"]]
-                    w = 2 if mine > theirs else (1 if mine == theirs else 0)
-                    st["wins" if w == 2 else ("ties" if w == 1 else "losses")] += 1
-                    awp = 1 if rng.random() < 0.7 * t["auton"] ** 2 else 0
-                    st["wp"] += w + awp
-                    st["ap"] += ap
-                    st["sp"] += min(mine, theirs)
-                    record[t["id"]] = st["wp"]
-        # VEX ranking: WP, then AP, then SP
-        ranked = sorted(pool, key=lambda t: (-stats[t["id"]]["wp"], -stats[t["id"]]["ap"],
-                                             -stats[t["id"]]["sp"], rng.random()))
-        rankings = [dict({"rank": i + 1, "team": {"id": t["id"], "name": t["number"]},
-                          "division": {"id": 1}}, **stats[t["id"]]) for i, t in enumerate(ranked)]
-        avail = ranked[:]
-        alliances = []
-        for cap in ranked[:8]:
-            if cap not in avail:
-                continue
-            avail.remove(cap)
-            if not avail:
-                break
-            pick = max(avail[:12], key=lambda t: strength(t, ts) * rng.uniform(0.8, 1.2))
-            avail.remove(pick)
-            alliances.append([cap, pick])
-        rounds = [(3, alliances), ]
-        current = alliances
-        rnd_codes = {8: 3, 4: 4, 2: 5}
-        while len(current) >= 2:
-            code = rnd_codes.get(len(current), 3)
-            nxt = []
-            for j in range(len(current) // 2):
-                a, b = current[j], current[-1 - j]
-                s = play(a, b, code, j + 1, 1, ts)
+        rankings = []
+        # Worlds is split into divisions that rank and pick alliances separately
+        divs = [(1, pool[0::2]), (2, pool[1::2])] if worlds else [(1, pool)]
+        for div, dpool in divs:
+            per_team = 8
+            slots = []
+            for _ in range(per_team):
+                order = dpool[:]
+                rng.shuffle(order)
+                slots.extend(order)
+            num = 0
+            for i in range(0, len(slots) - 3, 4):
+                four = slots[i:i + 4]
+                if len({t["id"] for t in four}) < 4:
+                    continue
+                num += 1
+                red, blue = four[:2], four[2:]
+                s = play(red, blue, 2, 1, num, ts)
                 ts += 420
-                nxt.append(a if s[0] >= s[1] else b)
-            current = nxt
+                # autonomous bonus (AP) to the alliance with better autons; AWP per team
+                ra = sum(t["auton"] for t in red) + rng.gauss(0, 0.4)
+                ba = sum(t["auton"] for t in blue) + rng.gauss(0, 0.4)
+                ap_red, ap_blue = (10, 0) if ra > ba else (0, 10)
+                for al, mine, theirs, ap in ((red, s[0], s[1], ap_red), (blue, s[1], s[0], ap_blue)):
+                    for t in al:
+                        st = stats[t["id"]]
+                        w = 2 if mine > theirs else (1 if mine == theirs else 0)
+                        st["wins" if w == 2 else ("ties" if w == 1 else "losses")] += 1
+                        awp = 1 if rng.random() < 0.7 * t["auton"] ** 2 else 0
+                        st["wp"] += w + awp
+                        st["ap"] += ap
+                        st["sp"] += min(mine, theirs)
+                        record[t["id"]] = st["wp"]
+            # VEX ranking: WP, then AP, then SP
+            ranked = sorted(dpool, key=lambda t: (-stats[t["id"]]["wp"], -stats[t["id"]]["ap"],
+                                                 -stats[t["id"]]["sp"], rng.random()))
+            rankings += [dict({"rank": i + 1, "team": {"id": t["id"], "name": t["number"]},
+                              "division": {"id": div}}, **stats[t["id"]]) for i, t in enumerate(ranked)]
+            avail = ranked[:]
+            alliances = []
+            for cap in ranked[:8]:
+                if cap not in avail:
+                    continue
+                avail.remove(cap)
+                if not avail:
+                    break
+                pick = max(avail[:12], key=lambda t: strength(t, ts) * rng.uniform(0.8, 1.2))
+                avail.remove(pick)
+                alliances.append([cap, pick])
+            current = alliances
+            rnd_codes = {8: 3, 4: 4, 2: 5}
+            while len(current) >= 2:
+                code = rnd_codes.get(len(current), 3)
+                nxt = []
+                for j in range(len(current) // 2):
+                    a, b = current[j], current[-1 - j]
+                    s = play(a, b, code, j + 1, 1, ts)
+                    ts += 420
+                    nxt.append(a if s[0] >= s[1] else b)
+                current = nxt
         skills = []
         for t in pool:
             st = strength(t, start)
@@ -151,7 +154,8 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
         rec = {
             "event": {"id": eid, "sku": f"DEMO-{eid}", "name": name, "start": _iso(start),
                       "end": _iso(end), "level": "World" if worlds else "Other",
-                      "divisions": [{"id": 1, "name": "Division 1"}]},
+                      "divisions": [{"id": d, "name": ("Science", "Technology")[d - 1] if worlds else "Division 1"}
+                                    for d, _ in divs]},
             "teams": [{"id": t["id"], "number": t["number"], "grade": t["grade"], "team_name": t["name"],
                        "location": {"country": "United States", "region": t["state"]}} for t in pool],
             "skills": skills, "matches": matches, "rankings": rankings, "final": True,
