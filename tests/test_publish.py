@@ -89,3 +89,27 @@ def test_site_uses_tuned_adaptive_model_with_its_calibration(tmp_path, monkeypat
     for shown, r, r0 in zip(ev["matches"], mine, raws):
         assert shown["p"] == pytest.approx(r.pred.p_red, abs=6e-4)
     assert any(abs(r.pred.p_red - r0.pred.p_red) > 0.01 for r, r0 in zip(mine, raws))
+
+
+def test_old_unplayed_matches_dont_keep_an_event_live(tmp_path):
+    """Scheduled matches that were never played (cancelled, or results never
+    entered) must not leave a finished event showing as live forever."""
+    raw = tmp_path / "raw"
+    generate(raw, n_teams=80, n_events=6, n_skills_events=2, seed=5)
+    path = raw / "events" / "50001.json"
+    rec = json.loads(path.read_text())
+    quals = [m for m in rec["matches"] if m["round"] == 2][-3:]
+    for m in quals:
+        m["started"] = None
+        for a in m["alliances"]:
+            a["score"] = 0
+    path.write_text(json.dumps(rec))
+    season = load_season("t", root=raw)
+    assert len(season.pending[50001]) == 3
+    ev = season.events[50001]
+    during = publish.publish(season, "t", out=tmp_path / "a", now_ts=ev.end - 3600)
+    later = publish.publish(season, "t", out=tmp_path / "b", now_ts=ev.end + 30 * 86400)
+    e1 = json.loads((during / "events" / "50001.json").read_text())
+    e2 = json.loads((later / "events" / "50001.json").read_text())
+    assert e1["status"] == "live" and len(e1["pending"]) == 3
+    assert e2["status"] == "done" and not e2["pending"] and "sim_live" not in e2

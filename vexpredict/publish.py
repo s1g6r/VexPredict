@@ -36,6 +36,7 @@ from .simulator import (ScoreNoise, SimInputs, captain_count, fit_score_noise, s
 
 SITE_DATA = ROOT / "site" / "data"
 SIMS = 1500
+STALE_AFTER = 2 * 86400   # unplayed matches this long after an event's end will never be played
 
 
 def _iso(ts: float) -> str:
@@ -225,6 +226,8 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
     for eid, ev in sorted(season.events.items(), key=lambda kv: kv[1].start):
         ms = by_event.get(eid, [])
         pend = season.pending.get(eid, [])
+        if ev.end + STALE_AFTER < now_ts:
+            pend = []   # scheduled but never played (cancelled or not entered): the event is over
         teams = sorted(set(season.event_teams.get(eid, [])) | {t for m in ms for t in m.teams}
                        | {t for p in pend for t in p.teams})
         hs = [t for t in teams if season.teams.get(t) and season.teams[t].is_hs]

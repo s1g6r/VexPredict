@@ -1,8 +1,7 @@
 # Pulls a season, exports the raw data to the data/<season> branch, and (for a
 # finished season) runs the backtest and the simulator check and commits the
-# reports to reports/<season>/. Checks every 2 hours but exits immediately
-# until the VEX_TOKEN secret exists, and switches itself off once the reports
-# are committed.
+# reports to reports/<season>/. Run it by hand (Actions -> Backtest -> Run
+# workflow); it exits immediately if the VEX_TOKEN secret is missing.
 # Long pulls resume: downloaded events are cached between runs.
 name: Backtest
 
@@ -16,8 +15,6 @@ on:
         description: "Run the backtest (only meaningful for a finished season)"
         type: boolean
         default: true
-  schedule:
-    - cron: "23 */2 * * *"
 
 permissions:
   contents: write
