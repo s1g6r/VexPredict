@@ -94,7 +94,9 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--season", default="Push Back", help="part of the season name, e.g. 'Push Back' or 'Override'")
     ap.add_argument("--max-events", type=int, default=0, help="stop after this many downloads (0 = no limit)")
-    ap.add_argument("--include-future", action="store_true", help="also save events that have not started")
+    ap.add_argument("--include-future", action="store_true", help="also save every event that has not started")
+    ap.add_argument("--ahead-days", type=float, default=14,
+                    help="also save events starting within this many days (team lists for pre-event forecasts)")
     ap.add_argument("--min-interval", type=float, default=0.25, help="seconds between API requests")
     args = ap.parse_args(argv)
 
@@ -108,7 +110,8 @@ def main(argv: list[str] | None = None) -> None:
     now = dt.datetime.now(dt.timezone.utc)
     events = [e for e in events if (e.get("event_type") or "").lower() not in SKIP_EVENT_TYPES]
     if not args.include_future:
-        events = [e for e in events if (parse_date(e.get("start")) or now) <= now]
+        horizon = now + dt.timedelta(days=args.ahead_days)
+        events = [e for e in events if (parse_date(e.get("start")) or now) <= horizon]
     events.sort(key=lambda e: e.get("start") or "")
     write_json(out / "season.json", {"season": season, "event_count": len(events)})
     print(f"{len(events)} events to check")
