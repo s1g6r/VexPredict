@@ -190,40 +190,63 @@ def _rules_season():
 
 
 def test_unlisted_qualifications():
-    """Events whose records list nothing follow the RECF rules: at a local
-    event Excellence and Tournament Champions are expected, Design and Skills
-    Champion are pending (they need a bigger spot allocation); at a Signature
-    Event only Excellence and Tournament Champions get Worlds spots. An event
-    that lists some qualifications is taken as written."""
+    """Events that haven't posted their qualifications follow VEX's order: at a
+    local event Excellence and Tournament Champions (the first 3 spots) are
+    expected, Design and Skills Champion (spots 4 and 5) are pending; a
+    Signature Event's Worlds spots are Excellence, Tournament Champions and
+    Skills Champion. An event that lists some qualifications is taken as written."""
     from vexpredict import hub
     q = hub.qualifications(_rules_season())
     st = lambda t, g: hub.team_status(q.get(t, []), g)
     S, W = hub.REGION, hub.WORLDS
     assert st(1, S) == "expected" and st(2, S) == "expected" and st(3, S) == "possible"
     assert not any(r["award"].startswith("Innovate") for r in q.get(4, []))
-    assert st(5, W) == "expected" and st(6, W) == "expected" and st(7, W) is None and st(8, W) is None
+    assert st(5, W) == "expected" and st(6, W) == "expected" and st(8, W) == "expected" and st(7, W) is None
     assert st(9, S) == "listed" and st(10, S) is None and st(11, S) is None
 
 
 def test_double_qualification_passes_down():
-    """Team 1 wins Excellence and Tournament Champions at the local event: its
-    second spot goes to the best skills team there that didn't win a
-    qualifying award (12, not 1). A States spot doesn't affect Worlds, so team
-    1 still takes its Signature spot; a team already holding a Worlds spot
-    frees its Signature spot for the skills list."""
+    """Team 1 wins Excellence and Tournament Champions at the local event: the
+    extra spot goes to the best skills team there that didn't win a
+    qualifying award (12). For Worlds, a team that already holds a spot frees
+    its Signature spot for the skills list."""
     from vexpredict import hub
+    from vexpredict.dataset import Award, Event
     q = hub.qualifications(_rules_season())
     passed = [(t, r["status"]) for t, rs in q.items() for r in rs if r["award"] == hub.PASSED]
     assert passed == [(12, "expected")]
-    assert hub.team_status(q[1], hub.WORLDS) == "expected"
-    # a team that already holds a Worlds spot frees its Signature spot for skills
     s = _rules_season()
-    from vexpredict.dataset import Award, Event
     s.events[0] = Event(0, "E0", "Earlier sig", -5.0, -5.0, "Signature")
     s.awards.append(Award(0, "Excellence Award (V5)", (), (6,)))
     q = hub.qualifications(s)
     got = [t for t, rs in q.items() for r in rs if r["award"] == hub.PASSED and r["target"] == hub.WORLDS]
-    assert got == [8]          # 6 was already in; 8 is the best skills team at the Signature not already in
+    assert got == [7]          # 6 already had a Worlds spot; 8 won Skills Champion there, so 7 is next
+
+
+def test_states_rules_no_lookback_and_region():
+    """For States, each event stands alone: a team that qualified earlier still
+    takes a new event's spot (no pass-down). A team from another region can't
+    take a States spot; it goes to the next in-region team on skills."""
+    from vexpredict import hub
+    from vexpredict.dataset import Award, Event, Season, SkillsResult, Team
+    s = Season(name="x")
+    s.teams[1] = Team(1, "1A", grade="High School", region="Illinois", country="United States")
+    s.teams[2] = Team(2, "2A", grade="High School", region="Indiana", country="United States")
+    s.teams[3] = Team(3, "3A", grade="High School", region="Indiana", country="United States")
+    s.teams[4] = Team(4, "4A", grade="High School", region="Illinois", country="United States")
+    s.events[1] = Event(1, "E1", "A", 0.0, 0.0, "Other", region="Illinois", country="United States")
+    s.events[2] = Event(2, "E2", "B", 1.0, 1.0, "Other", region="Illinois", country="United States")
+    s.awards += [Award(1, "Excellence Award (V5)", (), (1,)), Award(2, "Excellence Award (V5)", (), (1,)),
+                 Award(2, "Tournament Champions (V5)", (), (2,))]
+    for team, d in [(3, 90), (4, 80)]:
+        s.skills.append(SkillsResult(team, 2, 0.0, d, 0))
+    q = hub.qualifications(s)
+    assert [r["event_id"] for r in q[1]] == [1, 2]                     # 1 keeps both, nothing passes for that
+    assert hub.team_status(q.get(2, []), hub.REGION) is None             # out of region: no States spot
+    assert [r["award"] for r in q[4]] == [hub.PASSED]                    # 3 is from Indiana, so 4 gets it
+    # VEX spells some places differently for teams and events
+    assert hub._region_key("", "Taiwan") == hub._region_key("", "Chinese Taipei")
+    assert hub._region_key("", "Hong Kong, China") == hub._region_key("", "Hong Kong")
 
 
 def test_schedule_luck():

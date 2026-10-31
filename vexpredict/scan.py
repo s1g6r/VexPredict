@@ -14,7 +14,7 @@ plate against the event's teams and show a card with no further requests
                sk ([combined, auto, driver] best single-event skills, or 0),
                q bits: 1 = qualified for States, 2 = Worlds; 4 = States pending,
                  8 = Worlds pending (the award qualifies only if the event gets
-                 enough spots, which RECF hasn't set yet)
+                 enough spots, and its VEX page hasn't posted them)
       e      events: id, name (shortened), date, end, place, t (team indices)
 """
 from __future__ import annotations

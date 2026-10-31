@@ -453,7 +453,7 @@ async function teamPage(id) {
   const qGot = quals.filter(z => isQualified(quals, z.target) && (z.status || "listed") !== "possible");
   const qPend = quals.filter(z => !isQualified(quals, z.target) && z.status === "possible");
   const season = `${qGot.length ? `<p class="callout good"><b>Qualified:</b> ${qLine(qGot)}</p>` : ""}
-    ${qPend.length ? `<p class="callout"><b>Pending:</b> ${qLine(qPend)}. This award qualifies only if the event gets enough spots, which RECF sets in January.</p>` : ""}
+    ${qPend.length ? `<p class="callout"><b>Pending:</b> ${qLine(qPend)}. This award qualifies only if the event gets enough spots (4 for Design, 5 for Skills Champion), and the event's VEX page hasn't posted its count yet.</p>` : ""}
     ${skRow ? `<p class="muted">Skills: <b>${skRow.score}</b> (auto ${skRow.auto}, driver ${skRow.driver}) at <a href="#/event/${skRow.event_id}">${esc(skRow.event)}</a>. #${skRow.rank} in the world, #${skRegion} in ${esc(regionOf(skRow))}. <a href="#/skills">Skills standings</a></p>` : ""}`;
   NUMBERS[id] = t.number;
   const me = myTeam() === id;
@@ -635,8 +635,8 @@ const Q_RANK = { listed: 0, expected: 1, possible: 2 };
 const qStatus = (quals, t) => (quals || []).filter(z => z.target === t).map(z => z.status || (z.listed === false ? "expected" : "listed"))
   .sort((a, b) => Q_RANK[a] - Q_RANK[b])[0] || null;
 const isQualified = (quals, t) => ["listed", "expected"].includes(qStatus(quals, t));
-const Q_NOTE = { expected: "The event's records don't list qualifications; under the RECF rules this award gets a spot at every event of its kind",
-  possible: "Qualifies only if the event is allocated enough spots; RECF sets 2026-27 spot counts in January 2027" };
+const Q_NOTE = { expected: "The event hasn't posted which awards qualify; in VEX's qualifying order this award takes one of the first spots",
+  possible: "Qualifies only if the event gets enough spots (4 for Design, 5 for Skills Champion); the event's VEX page hasn't posted its count yet" };
 const Q_TARGETS = [["Region championship (States)", "States"], ["World Championship", "Worlds"]];
 async function qualifyPage() {
   setTitle("Qualification");
@@ -668,7 +668,7 @@ async function qualifyPage() {
       const hit = (meQ?.quals || []).filter(z => z.target === t);
       const st = qStatus(meQ?.quals, t);
       if (st && st !== "possible") return `<p class="callout good"><b>${esc(num(me))} is qualified for ${short}</b> · ${hit.filter(z => z.status !== "possible").map(how).join("; ")}</p>`;
-      if (st === "possible") return `<p class="callout"><b>${esc(num(me))}: pending for ${short}</b> · ${hit.map(how).join("; ")}. This counts if the event gets enough spots, which RECF sets in January.</p>`;
+      if (st === "possible") return `<p class="callout"><b>${esc(num(me))}: pending for ${short}</b> · ${hit.map(how).join("; ")}. This counts if the event gets enough spots, and its VEX page hasn't posted the count yet.</p>`;
       const meSk = sk.find(x => x.id === me);
       if (!meSk) return `<p class="callout">${esc(num(me))} isn't qualified for ${short} yet and has no skills score posted.</p>`;
       const pos = sk.filter(x => regionOf(x) === regionOf(meSk) && !qset.has(x.id)).findIndex(x => x.id === me) + 1;
@@ -684,10 +684,10 @@ async function qualifyPage() {
       ${qualified.length ? `<div class="panel tablewrap"><table class="qtable"><thead><tr><th>Team</th><th>How</th><th class="n">Date</th></tr></thead><tbody>
         ${qualified.map(x => `<tr class="${me === x.id ? "mine" : ""}"><td class="t">${teamLink(x.id)}<span class="subnote">${esc(regionOf(x))}</span></td>
           <td class="how">${x.mine.map(how).join("<br>")}</td><td class="n">${new Date(x.mine[0].date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</td></tr>`).join("")}
-      </tbody></table></div>${anyStar ? `<p class="muted small"><sup class="star">*</sup> The event's records don't list which awards qualify. Under the RECF rules ${t.startsWith("World") ? "a Signature Event's Excellence and Tournament Champions" : "an event's Excellence and Tournament Champions"} always get spots, and a double qualification passes to the next team on that event's skills list.</p>` : ""}`
+      </tbody></table></div>${anyStar ? `<p class="muted small"><sup class="star">*</sup> The event hasn't posted which awards qualify yet. ${t.startsWith("World") ? "VEX lists Excellence, Tournament Champions and Robot Skills Champion as a Signature Event's World Championship spots" : "In VEX's qualifying order, Excellence and Tournament Champions take the first three spots"}. A team that earns two spots at one event passes the extra one to the next team on that event's skills list.</p>` : ""}`
       : `<p class="empty">Nobody${r ? " in " + esc(r) : ""} has qualified for ${short} yet.</p>`}
       ${pendingRows.length ? `<h2>Pending spot counts</h2>
-      <p class="muted">These awards qualify only if the event is allocated enough spots. Design and Robot Skills Champion come after Excellence and Tournament Champions in the RECF order, and RECF sets this season's spot counts by event size in January 2027.</p>
+      <p class="muted">These awards qualify only if the event gets enough spots. In VEX's qualifying order Design is the 4th spot and Robot Skills Champion the 5th, and these events haven't posted their spot counts on events.vex.com yet.</p>
       <div class="panel tablewrap"><table class="qtable"><thead><tr><th>Team</th><th>How</th><th class="n">Date</th></tr></thead><tbody>
         ${pendingRows.map(x => `<tr class="${me === x.id ? "mine" : ""}"><td class="t">${teamLink(x.id)}<span class="subnote">${esc(regionOf(x))}</span></td>
           <td class="how">${x.mine.map(how).join("<br>")}</td><td class="n">${new Date(x.mine[0].date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</td></tr>`).join("")}
