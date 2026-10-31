@@ -15,8 +15,16 @@ let NUMBERS = {};    // team id -> number
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+let bundleLoad = null;
+async function loadBundle() {
+  // Packaged builds ship the data as a few chunk files instead of thousands of small ones.
+  const parts = await Promise.all(window.__VP_CHUNKS.map(u => fetch(u).then(r => {
+    if (!r.ok) throw new Error(`${r.status} ${u}`); return r.json(); })));
+  window.__VP_DATA = Object.assign({}, ...parts);
+}
 async function get(path) {
-  if (window.__VP_DATA) { if (path in window.__VP_DATA) return window.__VP_DATA[path]; throw new Error(`Not in this demo: ${path}`); }
+  if (window.__VP_CHUNKS && !window.__VP_DATA) await (bundleLoad = bundleLoad || loadBundle());
+  if (window.__VP_DATA) { if (path in window.__VP_DATA) return window.__VP_DATA[path]; throw new Error(`Not published: ${path}`); }
   if (cache.has(path)) return cache.get(path);
   const p = fetch(`data/${path}`).then(r => { if (!r.ok) throw new Error(`${r.status} ${path}`); return r.json(); });
   cache.set(path, p);

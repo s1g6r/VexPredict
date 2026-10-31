@@ -1,5 +1,6 @@
-# Pulls a past season, runs the backtest and the simulator check, and commits
-# the reports to reports/<season>/. Checks every 2 hours but exits immediately
+# Pulls a season, exports the raw data to the data/<season> branch, and (for a
+# finished season) runs the backtest and the simulator check and commits the
+# reports to reports/<season>/. Checks every 2 hours but exits immediately
 # until the VEX_TOKEN secret exists, and switches itself off once the reports
 # are committed.
 # Long pulls resume: downloaded events are cached between runs.
@@ -11,6 +12,10 @@ on:
       season:
         description: "Season name"
         default: "Push Back"
+      backtest:
+        description: "Run the backtest (only meaningful for a finished season)"
+        type: boolean
+        default: true
   schedule:
     - cron: "23 */2 * * *"
 
@@ -65,8 +70,23 @@ jobs:
         with:
           path: data/raw
           key: raw-${{ steps.gate.outputs.slug }}-${{ github.run_id }}
-      - name: Backtest and simulator check
+      - name: Export raw data to the data/<season> branch
         if: steps.gate.outputs.run == 'yes' && steps.pull.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SLUG: ${{ steps.gate.outputs.slug }}
+        run: |
+          out=$(mktemp -d)
+          tar -czf "$out/raw-$SLUG.tar.gz" -C data/raw "$SLUG"
+          ls -lh "$out"
+          cd "$out"
+          git init -q -b export
+          git config user.name "Sagar Raut"
+          git config user.email "rs1g6r@gmail.com"
+          git add . && git commit -q -m "Raw API data: $SEASON"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "export:refs/heads/data/$SLUG"
+      - name: Backtest and simulator check
+        if: steps.gate.outputs.run == 'yes' && steps.pull.outcome == 'success' && github.event.inputs.backtest != 'false'
         run: |
           python -m vexpredict.backtest --season "$SEASON"
           python -m vexpredict.simcheck --season "$SEASON"
@@ -82,13 +102,14 @@ jobs:
           print(info)
           PY
       - name: Commit reports
-        if: steps.gate.outputs.run == 'yes' && steps.pull.outcome == 'success'
+        if: steps.gate.outputs.run == 'yes' && steps.pull.outcome == 'success' && github.event.inputs.backtest != 'false'
         run: |
           git config user.name "Sagar Raut"
           git config user.email "rs1g6r@gmail.com"
           git add reports/
           git diff --cached --quiet || git commit -m "Backtest reports: $SEASON"
-          git push
+          git pull --rebase origin main
+          git push origin HEAD:main
       - name: Switch off the schedule now that the reports exist
         if: steps.gate.outputs.run == 'yes' && steps.pull.outcome == 'success' && github.event_name == 'schedule'
         env:
