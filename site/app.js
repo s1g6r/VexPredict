@@ -41,7 +41,8 @@ const pct = p => `${Math.round(p * 100)}%`;
 const rnd = x => (x == null ? "–" : Math.round(x));
 const num = id => NUMBERS[id] || id;
 const teamLink = (id, extra = "") => `<a href="#/team/${id}" class="${myTeam() === id ? "me" : ""}" ${extra}>${esc(num(id))}</a>`;
-function statusPill(s) {
+function statusPill(s, league = false) {
+  if (league && s === "live") return `<span class="pill">League, in progress</span>`;
   const label = { live: "Live", upcoming: "Upcoming", done: "Finished", "skills-only": "Skills only", "no-results": "No results" }[s] || s;
   return `<span class="pill ${s === "live" ? "live" : ""}">${label}</span>`;
 }
@@ -93,7 +94,7 @@ async function boot() {
 }
 
 async function route() {
-  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  const parts = location.hash.split("?")[0].replace(/^#\/?/, "").split("/").filter(Boolean);
   const [page, id, sub] = parts;
   navCurrent(page || "");
   window.scrollTo(0, 0);
@@ -141,13 +142,15 @@ function setupSearch() {
 // ---------- home ----------
 async function home() {
   setTitle("");
-  const live = META.events.filter(e => e.status === "live");
-  const upcoming = META.events.filter(e => e.status === "upcoming").reverse().slice(0, 5);
+  const liveAll = META.events.filter(e => e.status === "live");
+  const live = liveAll.filter(e => !e.league), leagues = liveAll.length - live.length;
+  const today = new Date().toISOString().slice(0, 10);
+  const upcoming = META.events.filter(e => e.status === "upcoming" && e.date >= today).reverse().slice(0, 5);
   const board = (await get(`${SEASON}/leaderboard.json`)).slice(0, 10);
   let next = "";
   const me = myTeam();
   if (me) {
-    for (const e of live) {
+    for (const e of liveAll) {
       const ev = await get(`${SEASON}/events/${e.id}.json`);
       const m = ev.pending.find(p => p.red.includes(me) || p.blue.includes(me));
       if (m) {
@@ -166,13 +169,14 @@ async function home() {
     <p class="lede">Predictions for VEX V5RC High School. Every match gets a win probability before it's played, every event gets a ranking forecast, and the accuracy is published.</p>
     ${next}
     ${live.length ? `<h2>Live now</h2><ul class="list panel">${live.map(evItem).join("")}</ul>` : ""}
+    ${leagues ? `<p><a href="#/events?s=league">${leagues} league${leagues === 1 ? "" : "s"} in progress</a> (leagues play over several weeks)</p>` : ""}
     ${upcoming.length ? `<h2>Coming up</h2><ul class="list panel">${upcoming.map(evItem).join("")}</ul>` : ""}
     <h2>Top rated teams</h2>
     <div class="panel tablewrap">${boardTable(board)}<p><a href="#/leaderboard">See all ${META.teams_rated} rated teams</a></p></div>
     ${me ? "" : `<p class="callout">Open your team's page and choose "This is my team" to see your next match here.</p>`}`;
 }
 function evItem(e) {
-  return `<li><a href="#/event/${e.id}">${esc(e.name)}</a><span class="row"><span class="muted">${e.date}</span>${statusPill(e.status)}</span></li>`;
+  return `<li><a href="#/event/${e.id}">${esc(e.name)}</a><span class="row"><span class="muted">${e.date}</span>${statusPill(e.status, e.league)}</span></li>`;
 }
 function boardTable(rows) {
   return `<table><thead><tr><th class="n">#</th><th>Team</th><th class="n">Rating</th><th class="n">Record</th><th class="n">Best skills</th><th>Region</th></tr></thead><tbody>
@@ -186,14 +190,16 @@ async function eventsPage() {
   setTitle("Events");
   app.innerHTML = `<h1>Events</h1><div class="row" style="margin:14px 0">
       <input type="text" id="evq" placeholder="Filter by name or event code" style="max-width:340px" aria-label="Filter events">
-      <select id="evs" aria-label="Status"><option value="">All events</option><option value="live">Live</option><option value="upcoming">Upcoming</option><option value="done">Finished</option></select>
+      <select id="evs" aria-label="Status"><option value="">All events</option><option value="live">Live now</option><option value="league">Leagues in progress</option><option value="upcoming">Upcoming</option><option value="done">Finished</option></select>
     </div><ul class="list panel" id="evlist"></ul>`;
   const draw = () => {
     const q = $("#evq").value.toLowerCase(), s = $("#evs").value;
     const rows = META.events.filter(e => e.status !== "skills-only" && e.status !== "no-results")
-      .filter(e => (!s || e.status === s) && (!q || e.name.toLowerCase().includes(q) || e.sku.toLowerCase().includes(q)));
+      .filter(e => (!s || (s === "league" ? e.status === "live" && e.league : s === "live" ? e.status === "live" && !e.league : e.status === s)) && (!q || e.name.toLowerCase().includes(q) || e.sku.toLowerCase().includes(q)));
     $("#evlist").innerHTML = rows.slice(0, 300).map(evItem).join("") || `<li class="empty">No events match. Clear the filter to see all.</li>`;
   };
+  const want = new URLSearchParams(location.hash.split("?")[1] || "").get("s");
+  if (want) $("#evs").value = want;
   $("#evq").addEventListener("input", draw); $("#evs").addEventListener("change", draw); draw();
 }
 
@@ -297,12 +303,12 @@ function forecastTab(el, ev, teams) {
     if (actualTop.length) hits = `<p class="callout">${overlap} of the ${k} teams we picked to finish top ${k} before the event actually did.</p>`;
   }
   el.innerHTML = `
-    <p class="lede">${live ? "The rest of qualifications, simulated" : "Qualifications simulated before the first match"} 1,500 times with each team's rating, the schedule${ev.status === "upcoming" ? " (random schedules until the real one is out)" : ""}, and V5RC ranking rules: win points, autonomous points, then strength of schedule. Top ${sim.captains} become alliance captains.</p>
+    <p class="lede">${live ? "The rest of qualifications, simulated" : "Qualifications simulated before the first match"} 1,500 times with each team's rating, the schedule${!ev.matches.length && !ev.pending.length ? " (random schedules until the real one is out)" : ""}, and V5RC ranking rules: win points, autonomous points, then strength of schedule. Top ${sim.captains} become alliance captains.</p>
     ${hits}
-    <div class="panel tablewrap"><table><thead><tr><th>Team</th>${ev.status !== "upcoming" ? `<th class="n">${done ? "Final" : "Now"}</th><th class="n hide-m">Record</th>` : ""}
+    <div class="panel tablewrap"><table><thead><tr><th>Team</th>${(ev.matches.length || ev.pending.length) ? `<th class="n">${done ? "Final" : "Now"}</th><th class="n hide-m">Record</th>` : ""}
       <th class="n hide-m">Rating</th><th class="n">Expected</th><th>Captain odds</th><th class="n hide-m">Rank 1</th></tr></thead><tbody>
       ${rows.map(r => `<tr class="${myTeam() === r.id ? "mine" : ""}"><td class="t">${teamLink(r.id)}</td>
-        ${ev.status !== "upcoming" ? `<td class="n">${r.t.rank ?? "–"}</td><td class="n hide-m">${r.t.record ?? "–"}</td>` : ""}
+        ${(ev.matches.length || ev.pending.length) ? `<td class="n">${r.t.rank ?? "–"}</td><td class="n hide-m">${r.t.record ?? "–"}</td>` : ""}
         <td class="n hide-m">${rnd(live || !done ? r.t.rating_now : r.t.rating_pre)}</td><td class="n">${r.mean_rank.toFixed(1)}</td>
         <td style="white-space:nowrap"><span class="meter"><i style="width:${r.p_captain * 100}%"></i></span>${pct(r.p_captain)}</td><td class="n hide-m">${pct(r.p_first)}</td></tr>`).join("")}
     </tbody></table></div>`;

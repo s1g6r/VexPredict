@@ -42,7 +42,7 @@ def test_every_page_renders_without_errors(server):
     num_me = next(t["number"] for t in ev["teams"] if t["id"] == me)
     pages = ["#/", "#/events", "#/leaderboard", "#/accuracy", "#/event/50040/matches", "#/event/50040/forecast",
              "#/event/50040/picks", "#/event/50040/teams", "#/event/50040/brief", "#/event/90000/forecast",
-             "#/event/50000/forecast", f"#/team/{me}", "#/nope"]
+             "#/event/50000/forecast", f"#/team/{me}", "#/events?s=league", "#/nope"]
     with pw.sync_playwright() as p:
         b = p.chromium.launch()
         ctx = b.new_context(viewport={"width": 390, "height": 844})

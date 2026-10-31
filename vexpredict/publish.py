@@ -27,7 +27,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import REPORTS_DIR, ROOT, slugify
-from .dataset import Match, Season, load_season
+from .dataset import DAY, LONG_EVENT, Match, Season, load_season
 from .models.base import Model
 from .models.epa import EPAMix, EPASkills, build_epa, fit_skills_map
 from .tuned import tuned_settings
@@ -233,13 +233,20 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
         hs = [t for t in teams if season.teams.get(t) and season.teams[t].is_hs]
         if not hs:
             continue
-        status = "done" if ms and not pend and ev.end < now_ts else ("live" if ms or pend else "upcoming")
+        league = ev.end - ev.start > LONG_EVENT
+        # Event dates are calendar days: an event is on from its start until
+        # the end of its last day.
+        on_now = ev.start <= now_ts < ev.end + DAY
         if ev.start > now_ts:
             status = "upcoming"
-        if not ms and not pend and ev.end < now_ts:
+        elif ms and not pend and not on_now:
+            status = "done"
+        elif ms or pend or on_now:
+            status = "live"
+        else:
             status = "skills-only" if any(s.event_id == eid for s in season.skills) else "no-results"
         rec = {"id": eid, "sku": ev.sku, "name": ev.name, "date": _iso(ev.start), "status": status,
-               "worlds": ev.is_worlds, "teams": [], "matches": [], "pending": []}
+               "worlds": ev.is_worlds, "league": league, "teams": [], "matches": [], "pending": []}
         ranks = season.rankings.get(eid, {})
         # each team's division: from the rankings, else from its qualification matches
         div_of = {t: r.division_id for t, r in ranks.items() if r.division_id}
@@ -295,14 +302,15 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
                                           remaining=[(p.red, p.blue) for p in dpend], live_rankings=dranks or None)))
             if live:
                 rec["sim_live"] = _merge(live)
-        elif status == "upcoming" and len(ev.divisions) > 1:
+        elif not ms and status in ("upcoming", "live") and len(ev.divisions) > 1:
             rec["divisions_pending"] = True   # teams aren't split into divisions until the schedule is out
-        elif status == "upcoming" and len(teams) >= 8:
+        elif not ms and status in ("upcoming", "live") and len(teams) >= 8:
             rec["sim_pre"] = _merge([(0, run_sim(season, teams, {t: rating_now(t) for t in teams}, played_n,
                                                  model.scale.std, noise, u0, now_ts, eid, played=[]))])
         _write(out / "events" / f"{eid}.json", rec)
         index.append({"id": eid, "sku": ev.sku, "name": ev.name, "date": _iso(ev.start), "status": status,
-                      "teams": len(teams), "hs_teams": len(hs), "matches": len(ms), "worlds": ev.is_worlds})
+                      "teams": len(teams), "hs_teams": len(hs), "matches": len(ms), "worlds": ev.is_worlds,
+                      **({"league": True} if league else {})})
 
     # --- leaderboard + team pages ------------------------------------------
     hs_rated = [(t, v) for t, v in current.items() if season.teams.get(t) and season.teams[t].is_hs and played_n[t] > 0]
