@@ -160,11 +160,12 @@ Served by GitHub Pages from the **Update predictions** workflow. DNS is a
 `CNAME` record `stats` pointing to `s1g6r.github.io` on Cloudflare (DNS only,
 grey cloud, so GitHub issues the HTTPS certificate). HTTPS is enforced.
 
-The site is meant to re-pull Override and republish every 10 minutes from
-Friday to Sunday (tournament days) and daily otherwise, via the `schedule:` in
-`update.yml`. As of Oct 31, 2026, GitHub has never fired a scheduled run in
-this repository, so updates happen when **Actions → Update predictions → Run
-workflow** is pressed (mode `quick` for events on today, `full` for everything). It uses the settings the
+The site re-pulls Override and republishes every 10 minutes from Friday to
+Sunday (tournament days) and daily otherwise, via the `schedule:` in
+`update.yml`. To update by hand: **Actions → Update predictions → Run workflow**
+(mode `quick` for events on today, `full` for everything). If the schedule ever
+stops firing, re-saving `update.yml` from the GitHub website (any small edit)
+re-registers it. It uses the settings the
 Push Back backtest tuned.
 
 - **10-minute runs:** these only re-pull events that are on today, and leagues every few hours, so each run stays short.
