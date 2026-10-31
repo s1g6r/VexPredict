@@ -2,83 +2,101 @@
 
 Calibrated match prediction for **VEX V5RC High School**: who wins, by how much,
 and how sure we are, with published accuracy against the ratings every other
-VEX app uses (TrueSkill, OPR, CCWM).
+VEX app uses (TrueSkill, OPR, CCWM). There's also a ranking forecast for every
+event, a match brief for your team, and a live pick list for alliance selection.
 
-Status: **step 1 of 5, the backtest.** Before any UI exists, the rating has to
-be shown to beat the community baselines on a real past season.
+```
+fetch ──> data/raw/<season>/events/*.json          (VEX Events API, resumable)
+            │
+            ├─> backtest  ──> reports/<season>/backtest.md   which model predicts best
+            ├─> simcheck  ──> reports/<season>/simcheck.md   are ranking forecasts right
+            └─> publish   ──> site/data/<season>/*.json      what the website reads
+                                   │
+                                 site/  (static: index.html, app.js, style.css)
+```
 
-## Setup
+## Quick start
 
 ```bash
 cd VexPredict
-cp ../VexCompare/.env .env          # same VEX_TOKEN as VexCompare
-python3 -m pip install -r requirements.txt   # numpy (only needed for the backtest)
+cp ../VexCompare/.env .env                    # same VEX_TOKEN as VexCompare
+python3 -m pip install -r requirements.txt    # numpy
+
+python3 -m vexpredict.fetch    --season "Push Back"   # pull last season (resumable, takes a while)
+python3 -m vexpredict.backtest --season "Push Back"   # tune + score all models
+python3 -m vexpredict.simcheck --season "Push Back"   # check the ranking forecasts
+python3 -m vexpredict.publish  --season "Push Back"   # build the site data
+
+python3 -m http.server -d site 8000            # open http://localhost:8000
 ```
 
-The data pull uses only the Python standard library, so it works before
-installing anything.
+No API access? `python3 -m vexpredict.demo` runs the whole pipeline on a
+synthetic season (made-up teams, clearly labelled on the site).
 
-## 1. Pull a season
+The data pull uses only the Python standard library (3.9+), so it runs before
+anything is installed. Stop it any time with Ctrl-C and rerun it to continue.
 
-```bash
-python3 -m vexpredict.fetch --season "Push Back"
-```
+## What the site does
 
-This saves every Push Back event (teams, skills, all matches) to
-`data/raw/push-back/events/<id>.json`. It's resumable: stop it with Ctrl-C and
-run the same command again to continue. Finished events are never downloaded
-twice. A full season is a few thousand events, so let it run.
+| Page | What it answers |
+|---|---|
+| Event, Matches | Every match's win probability and predicted score, made before it was played; "called it" or "upset" afterwards |
+| Event, Ranking forecast | Each team's expected final rank, odds of being an alliance captain, and odds of finishing first (pre-event, and live during quals) |
+| Event, Brief | For your team: each upcoming match, your partner and opponents' ratings, autonomous rates, skills and your scouting notes |
+| Event, Pick list | Available teams ranked by rating plus an adjustable weight on autonomous. Tap "Picked" as alliance selection happens and the list reorders |
+| Team | Rating through the season, match log, scouting tags and notes |
+| Ratings | All HS teams, filterable by region |
+| Accuracy | Backtest results vs TrueSkill, OPR and CCWM, plus how good the ranking forecasts are |
 
-## 2. Backtest
+There are no accounts and no login. Scouting notes and pick lists stay in the
+browser. To share notes with teammates, use "Export all notes" and then "Import notes".
 
-```bash
-python3 -m vexpredict.backtest --season "Push Back"
-```
+## How it's tested
 
-This writes `reports/push-back/backtest.md` and `metrics.json`.
-
-How the backtest works (no peeking at the future):
-
-- all matches of the season form a single time-ordered stream
-- for each match, every model predicts first and only then sees the result
-- hyper-parameters are tuned on the first 40% of the season; every number in
-  the report comes from the remaining 60% (state championships and Worlds included)
-- skills results only count once they're published (the day after their event ends)
-
-Reported slices: HS overall, HS quals, HS elims, HS cold start (a team with
-fewer than 5 matches), and HS Worlds. Metrics: accuracy, Brier score, log loss,
-score MAE, and a calibration table.
+- **Backtest:** one time-ordered stream of all season matches. Each model predicts and only then sees the result. Settings are tuned on the first 40% of the season; every reported number comes from the remaining 60% (States and Worlds included). Slices: HS overall, quals, elims, cold start, and Worlds.
+- **Simulator check:** at the start and halfway point of every division's quals, predicted final rankings are compared with the real ones, against a "current standings" baseline.
+- **Tests (`python3 -m pytest -q`, 25 of them):**
+  - TrueSkill matches the reference package.
+  - No model's past predictions change when future matches are added.
+  - OPR recovers the true strengths.
+  - The skills prior beats a field-average start.
+  - The simulator stays calibrated and beats the standings baseline.
+  - Predictions shown on the site are the exact pre-match predictions.
+  - The data pull is checked against a fake API (pagination, HTTP 429, resume, bad token).
+  - Every site page loads in a real browser with no errors and no sideways scrolling on a phone.
 
 ## Models
 
 | Model | What it is |
 |---|---|
-| TrueSkill | What vrc-data-analysis, RoboScout and Robot Stats use. Default `trueskill` parameters; verified against that package in the tests. |
-| OPR / CCWM (in-event) | What VEX via shows live: least squares over the qualification matches already played at the current event. |
-| Win rate | Sanity-check baseline. |
-| **EPA** | A rating in points (expected contribution to the alliance score). Errors are clipped so blowouts don't wreck ratings, the update size shrinks as a team plays more, and win probability scales with the current spread of scores. |
-| **EPA + skills prior** | EPA where a team's published skills results (solo runs, so a clean individual signal) set its starting rating and re-anchor it at each new event. The skills-to-points mapping is fit on training events only. |
+| TrueSkill | What vrc-data-analysis, RoboScout and Robot Stats use (default `trueskill` settings) |
+| OPR / CCWM (in-event) | What VEX via shows live: least squares over the event's quals so far |
+| Win rate | Sanity-check baseline |
+| **EPA** | A rating in points (expected contribution to the alliance score). Errors are clipped, the update size shrinks with experience, and the win-probability scale follows the season's score spread |
+| **EPA + skills prior** | Published skills results (solo runs) set a team's starting rating and re-anchor it at each new event. The mapping is fit on training events only |
 
-## Tests
+The **event simulator** plays out the remaining schedule 1,500 times using the
+ratings, rating uncertainty, a fitted score-noise model, and V5RC ranking rules:
+WP (win 2, tie 1, plus autonomous win points), then AP, then SP. Autonomous
+tendencies come from each team's earlier events.
 
-```bash
-python3 -m pip install pytest trueskill
-python3 -m pytest -q
-```
+## Going live at stats.2360arachnid.com
 
-The tests generate a synthetic season with known team strengths in the same
-format the API returns, then check:
+1. Push this repo to GitHub.
+2. Add the secret: repo **Settings → Secrets and variables → Actions → New secret**, name `VEX_TOKEN`.
+3. **Settings → Pages → Source: GitHub Actions.**
+4. Commit `reports/push-back/metrics.json` and `simcheck.json` after running the backtest, so Override predictions use the settings tuned on Push Back.
+5. DNS: add a `CNAME` record `stats` pointing to `<github-username>.github.io` (`site/CNAME` already says `stats.2360arachnid.com`).
+6. Run **Actions → Update predictions → Run workflow** once.
 
-- TrueSkill matches the reference package
-- no model's past predictions change when future matches are added (leakage test)
-- in-event OPR recovers the true strengths
-- the skills prior beats a field-average start
-- the full backtest and report run end to end
+After that, `.github/workflows/update.yml` re-pulls and republishes every
+10 minutes Friday to Sunday (tournament days) and daily otherwise. The API
+token stays in GitHub's secret store and never reaches the site.
 
 ## Roadmap
 
-1. Backtest on Push Back (this step)
-2. Event simulator: predicted final rankings, alliance-captain odds, and a win probability for every match
-3. Match briefs plus shared scouting tags
-4. Live alliance-selection pick list
-5. Public launch at `stats.2360arachnid.com`: an accuracy page and a JSON API
+1. ~~Backtest harness~~ (real Push Back numbers pending the first pull)
+2. ~~Event simulator~~
+3. ~~Match briefs and scouting tags~~ (tags are per-browser; a shared team notebook needs a small backend)
+4. ~~Live pick list~~
+5. Launch: real data, forum post, public JSON API (the files in `site/data` already are one)

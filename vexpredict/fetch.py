@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from .api import ApiError, Client
+from . import config
 from .config import V5RC_PROGRAM_ID, load_token, season_dir, slugify
 
 FINAL_AFTER_DAYS = 3  # results are treated as final this long after an event ends
@@ -90,7 +91,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--min-interval", type=float, default=0.25, help="seconds between API requests")
     args = ap.parse_args(argv)
 
-    client = Client(load_token(), min_interval=args.min_interval)
+    client = Client(load_token(), base=config.API_BASE, min_interval=args.min_interval)
     season = find_season(client, args.season)
     slug = slugify(args.season)
     out = season_dir(slug)

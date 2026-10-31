@@ -470,6 +470,7 @@ async function accuracy() {
     <p class="lede">Every model here is tested on a full past season. It predicts each match before seeing the result, settings are tuned only on the first part of the season, and the numbers below come from the rest, State championships and Worlds included.</p>`;
   if (acc.metrics) {
     const r = acc.metrics.results;
+    if (acc.metrics.season && acc.metrics.season !== META.season) html += `<p class="callout">These results are from testing on ${esc(acc.metrics.season)}, the last full season. This season's predictions use the settings tuned there.</p>`;
     const slices = ["HS, all matches", "HS eliminations", "HS Worlds"];
     for (const s of slices) {
       const n = Object.values(r)[0].slices[s]?.n;

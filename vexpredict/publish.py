@@ -51,21 +51,34 @@ def _write(path: Path, obj) -> None:
     os.replace(tmp, path)
 
 
-def build_model(season: Season, slug: str) -> tuple[EPA, dict]:
-    metrics = REPORTS_DIR / slug / "metrics.json"
-    if metrics.exists():
-        p = dict(json.loads(metrics.read_text())["results"]["EPA + skills prior"]["params"])
-        p["skills_map"] = (p.pop("skills_a"), p.pop("skills_b"))
-        return EPASkills(**p), {"source": "tuned by backtest", **{k: v for k, v in p.items() if k != "skills_map"},
-                                "skills_map": list(p["skills_map"])}
+def build_model(season: Season, slug: str, tune_from: str | None = None) -> tuple[EPA, dict]:
+    """EPA + skills prior with the best available settings: this season's
+    backtest if it exists, else another season's (e.g. Push Back settings for
+    Override), else defaults. The skills-to-points map is refit on this season
+    once there is enough data, since each game scores differently."""
+    for src in (slug, tune_from):
+        metrics = REPORTS_DIR / src / "metrics.json" if src else None
+        if metrics and metrics.exists():
+            p = dict(json.loads(metrics.read_text())["results"]["EPA + skills prior"]["params"])
+            p["skills_map"] = (p.pop("skills_a"), p.pop("skills_b"))
+            source = "tuned by backtest" if src == slug else f"tuned by the {src} backtest"
+            if src != slug and season.matches:
+                a, b, _, n = fit_skills_map(season, season.matches[-1].ts + 1)
+                if n >= 200:
+                    p["skills_map"] = (a, b)
+            return EPASkills(**p), {"source": source, **{k: v for k, v in p.items() if k != "skills_map"},
+                                    "skills_map": list(p["skills_map"])}
     split = season.matches[int(len(season.matches) * 0.4)].ts if season.matches else math.inf
     a, b, _, _ = fit_skills_map(season, split)
     return EPASkills(skills_map=(a, b)), {"source": "defaults (run the backtest to tune)", "skills_map": [a, b]}
 
 
-def _sim_settings(slug: str) -> float:
-    path = REPORTS_DIR / slug / "simcheck.json"
-    return float(json.loads(path.read_text())["u0"]) if path.exists() else 0.3
+def _sim_settings(slug: str, tune_from: str | None = None) -> float:
+    for src in (slug, tune_from):
+        path = REPORTS_DIR / src / "simcheck.json" if src else None
+        if path and path.exists():
+            return float(json.loads(path.read_text())["u0"])
+    return 0.3
 
 
 def _random_schedule(teams: list[int], per_team: int, rng: np.random.Generator):
@@ -109,10 +122,11 @@ def run_sim(season: Season, teams: list[int], rating: dict[int, float], played_n
                                "auton": _r(rates.ap_share.get(t, 0.5), 3)} for t in teams}}
 
 
-def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | None = None) -> Path:
+def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | None = None,
+            tune_from: str | None = None) -> Path:
     out = (out or SITE_DATA) / slug
-    model, model_info = build_model(season, slug)
-    u0 = _sim_settings(slug)
+    model, model_info = build_model(season, slug, tune_from)
+    u0 = _sim_settings(slug, tune_from)
     model.reset(season)
 
     by_event: dict[int, list[Match]] = defaultdict(list)
@@ -148,7 +162,7 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
     noise = fit_score_noise(pairs)
 
     # rating history: replay cheaply by recording ratings at the end of each event
-    model2, _ = build_model(season, slug)
+    model2, _ = build_model(season, slug, tune_from)
     model2.reset(season)
     ends: dict[int, int] = {}
     for m in season.matches:
@@ -282,9 +296,12 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
 
     acc = {}
     for name in ("metrics.json", "simcheck.json"):
-        p = REPORTS_DIR / slug / name
-        if p.exists():
-            acc[name.split(".")[0]] = json.loads(p.read_text())
+        for src in (slug, tune_from):
+            p = REPORTS_DIR / src / name if src else None
+            if p and p.exists():
+                acc[name.split(".")[0]] = json.loads(p.read_text())
+                acc.setdefault("from_season", {})[name.split(".")[0]] = src
+                break
     _write(out / "accuracy.json", acc)
 
     meta = {"season": season.name, "slug": slug, "synthetic": season.synthetic,
@@ -304,9 +321,11 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--season", default="Push Back")
+    ap.add_argument("--tune-from", default=None,
+                    help="reuse another season's backtest settings, e.g. --tune-from 'Push Back'")
     args = ap.parse_args(argv)
     slug = slugify(args.season)
-    out = publish(load_season(slug), slug)
+    out = publish(load_season(slug), slug, tune_from=slugify(args.tune_from) if args.tune_from else None)
     print("Published to", out)
 
 

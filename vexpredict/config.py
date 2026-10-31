@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("VEXPREDICT_DATA", ROOT / "data"))
 REPORTS_DIR = ROOT / "reports"
 
-API_BASE = "https://events.vex.com/api/v2"
+API_BASE = os.environ.get("VEX_API_BASE", "https://events.vex.com/api/v2")
 V5RC_PROGRAM_ID = 1
 HIGH_SCHOOL = "High School"
 

@@ -1,0 +1,59 @@
+# Re-pulls results and republishes the site to GitHub Pages.
+# Needs a repository secret VEX_TOKEN (Settings > Secrets and variables > Actions)
+# and Pages set to "GitHub Actions" (Settings > Pages > Source).
+name: Update predictions
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/10 13-23 * * 5,6,0"   # every 10 min, Fri-Sun 8am-6pm Central (event days)
+    - cron: "0 0-3 * * 6,0"          # evening finishes Fri/Sat (UTC is a day ahead)
+    - cron: "17 9 * * *"             # once a day otherwise
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: update
+  cancel-in-progress: false
+
+env:
+  SEASON: "Override"
+  TUNE_FROM: "Push Back"
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Restore saved API data (makes each pull incremental)
+        uses: actions/cache@v4
+        with:
+          path: data/raw
+          key: raw-${{ env.SEASON }}-${{ github.run_id }}
+          restore-keys: raw-${{ env.SEASON }}-
+      - name: Pull results
+        env:
+          VEX_TOKEN: ${{ secrets.VEX_TOKEN }}
+        run: python -m vexpredict.fetch --season "$SEASON"
+      - name: Publish
+        run: python -m vexpredict.publish --season "$SEASON" --tune-from "$TUNE_FROM"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+  deploy:
+    needs: update
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
