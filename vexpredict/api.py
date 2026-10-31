@@ -18,6 +18,9 @@ from typing import Any, Iterable
 from .config import API_BASE
 
 PER_PAGE = 250
+BACKOFF_START = 5.0     # first wait after a 429 / 5xx, doubled each retry
+BACKOFF_MAX = 120.0
+MAX_INTERVAL = 5.0      # slowest steady request pace after repeated 429s
 
 
 class ApiError(RuntimeError):
@@ -37,10 +40,11 @@ def _ssl_context() -> ssl.SSLContext:
 
 class Client:
     def __init__(self, token: str, base: str = API_BASE, min_interval: float = 0.25,
-                 max_retries: int = 8, verbose: bool = True):
+                 max_retries: int = 10, verbose: bool = True):
         self.token = token
         self.base = base.rstrip("/")
-        self.min_interval = min_interval
+        self.base_interval = min_interval
+        self.min_interval = min_interval  # adapts: slows after 429s, recovers on success
         self.max_retries = max_retries
         self.verbose = verbose
         self._last = 0.0
@@ -54,7 +58,7 @@ class Client:
 
     def get(self, path: str, params: Iterable[tuple[str, Any]] = ()) -> Any:
         url = self._url(path, list(params))
-        delay = 2.0
+        delay = BACKOFF_START
         for attempt in range(self.max_retries + 1):
             wait = self.min_interval - (time.monotonic() - self._last)
             if wait > 0:
@@ -68,7 +72,9 @@ class Client:
             try:
                 with urllib.request.urlopen(req, timeout=60, context=self._ctx) as resp:
                     self.requests_made += 1
-                    return json.loads(resp.read().decode("utf-8"))
+                    body = json.loads(resp.read().decode("utf-8"))
+                self.min_interval = max(self.base_interval, self.min_interval * 0.97)
+                return body
             except urllib.error.HTTPError as e:
                 if e.code in (401, 403):
                     raise ApiError(
@@ -79,11 +85,21 @@ class Client:
                 if e.code == 404:
                     raise ApiError(f"HTTP 404 for {url}") from None
                 if e.code == 429 or e.code >= 500:
+                    # Some servers answer "Retry-After: 0" while still limiting,
+                    # so never wait less than our own backoff, and slow the
+                    # steady pace so we stop hitting the limit.
                     ra = e.headers.get("Retry-After") if e.headers else None
-                    sleep_for = float(ra) if ra and ra.replace(".", "").isdigit() else delay
-                    self._log(f"  HTTP {e.code}, waiting {sleep_for:.0f}s (attempt {attempt + 1})")
+                    try:
+                        server_wait = float(ra) if ra else 0.0
+                    except ValueError:
+                        server_wait = 0.0
+                    sleep_for = max(server_wait, delay)
+                    if e.code == 429:
+                        self.min_interval = min(max(self.min_interval * 2, 0.5), MAX_INTERVAL)
+                    self._log(f"  HTTP {e.code}, waiting {sleep_for:.0f}s (attempt {attempt + 1}); "
+                              f"pace now {self.min_interval:.2f}s/request")
                     time.sleep(sleep_for)
-                    delay = min(delay * 2, 300)
+                    delay = min(delay * 2, BACKOFF_MAX)
                     continue
                 raise ApiError(f"HTTP {e.code} for {url}: {e.read()[:300]!r}") from None
             except ssl.SSLError as e:
@@ -95,7 +111,7 @@ class Client:
             except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
                 self._log(f"  network error {e}, retrying in {delay:.0f}s")
                 time.sleep(delay)
-                delay = min(delay * 2, 300)
+                delay = min(delay * 2, BACKOFF_MAX)
         raise ApiError(f"Gave up on {url} after {self.max_retries} retries")
 
     def get_all(self, path: str, params: Iterable[tuple[str, Any]] = ()) -> list:

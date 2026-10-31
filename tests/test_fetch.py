@@ -8,6 +8,7 @@ import urllib.parse
 
 import pytest
 
+from vexpredict import api as apimod
 from vexpredict import config, fetch
 from vexpredict.dataset import load_season
 
@@ -25,7 +26,7 @@ def _match(i, red, blue, rs, bs, scored=True):
 
 class Fake(http.server.BaseHTTPRequestHandler):
     hits = []
-    throttled = set()
+    throttled = []
 
     def log_message(self, *a):
         pass
@@ -36,8 +37,8 @@ class Fake(http.server.BaseHTTPRequestHandler):
         Fake.hits.append(u.path)
         if self.headers.get("Authorization") != "Bearer tok":
             return self._send(401, {"message": "no"})
-        if u.path.endswith("/skills") and u.path not in Fake.throttled:
-            Fake.throttled.add(u.path)
+        if u.path.endswith("/skills") and Fake.throttled.count(u.path) < 3:
+            Fake.throttled.append(u.path)     # three 429s in a row with "Retry-After: 0"
             self.send_response(429)
             self.send_header("Retry-After", "0")
             self.end_headers()
@@ -89,6 +90,8 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(fetch, "season_dir", lambda slug: tmp_path / "raw" / slug)
     monkeypatch.setenv("VEX_TOKEN", "tok")
+    monkeypatch.setattr(apimod, "BACKOFF_START", 0.01)
+    monkeypatch.setattr(apimod, "MAX_INTERVAL", 0.02)
     Fake.hits.clear()
     Fake.throttled.clear()
     yield tmp_path
@@ -123,3 +126,24 @@ def test_bad_token_stops_with_clear_message(api, monkeypatch):
     with pytest.raises(Exception) as e:
         fetch.main(["--season", "Push Back", "--min-interval", "0"])
     assert "token was rejected" in str(e.value)
+
+
+def test_retry_after_zero_still_backs_off(monkeypatch):
+    """A 429 saying 'Retry-After: 0' must not cause instant retries."""
+    import io
+    import urllib.error
+    calls, sleeps = [], []
+
+    def fake_urlopen(req, timeout, context):
+        calls.append(1)
+        if len(calls) <= 3:
+            raise urllib.error.HTTPError(req.full_url, 429, "Too Many", {"Retry-After": "0"}, io.BytesIO(b""))
+        return io.BytesIO(b'{"data": [], "meta": {"last_page": 1}}')
+
+    monkeypatch.setattr(apimod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(apimod.time, "sleep", lambda s: sleeps.append(s))
+    c = apimod.Client("tok", base="http://x", min_interval=0.25, verbose=False)
+    assert c.get("seasons") == {"data": [], "meta": {"last_page": 1}}
+    backoffs = [s for s in sleeps if s >= apimod.BACKOFF_START]
+    assert backoffs[:3] == [5.0, 10.0, 20.0]
+    assert c.min_interval > 0.25          # slowed down after the 429s
