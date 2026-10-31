@@ -151,7 +151,7 @@ def test_undated_league_matches_go_to_event_end(tmp_path):
     def match(n, r, b, rs, bs, started=None):
         al = lambda color, ids, s: {"color": color, "score": s,  # noqa: E731
                                     "teams": [{"team": {"id": i}, "sitting": False} for i in ids]}
-        return {"round": 2, "instance": 1, "matchnum": n, "scored": True, "division": {"id": 1},
+        return {"round": 2, "instance": 1, "matchnum": n, "division": {"id": 1},
                 "started": started, "alliances": [al("red", r, rs), al("blue", b, bs)]}
 
     def event(eid, start, end, matches):

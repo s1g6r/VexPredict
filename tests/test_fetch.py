@@ -18,7 +18,7 @@ RECENT = (NOW - dt.timedelta(hours=5)).isoformat()
 
 
 def _match(i, red, blue, rs, bs, scored=True):
-    return {"id": i, "division": {"id": 1}, "round": 2, "instance": 1, "matchnum": i, "scored": scored,
+    return {"id": i, "division": {"id": 1}, "round": 2, "instance": 1, "matchnum": i, "scored": False,
             "started": OLD if scored else None,
             "alliances": [{"color": "red", "score": rs, "teams": [{"team": {"id": t, "name": str(t)}, "sitting": False} for t in red]},
                           {"color": "blue", "score": bs, "teams": [{"team": {"id": t, "name": str(t)}, "sitting": False} for t in blue]}]}

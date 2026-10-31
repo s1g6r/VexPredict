@@ -72,7 +72,7 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
             started = None if rng.random() < missing_times else _iso(ts)
             matches.append({
                 "id": eid * 1000 + mid, "division": {"id": 1}, "round": rnd, "instance": inst,
-                "matchnum": num, "scheduled": None, "started": started, "scored": True,
+                "matchnum": num, "scheduled": None, "started": started, "scored": False,  # the real API reports false even for played matches
                 "alliances": [
                     {"color": "red", "score": sc[0], "teams": [{"team": {"id": t["id"], "name": t["number"]}, "sitting": False} for t in red]},
                     {"color": "blue", "score": sc[1], "teams": [{"team": {"id": t["id"], "name": t["number"]}, "sitting": False} for t in blue]},

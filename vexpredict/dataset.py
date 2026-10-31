@@ -172,13 +172,20 @@ def _alliance(m: dict, color: str) -> tuple[tuple[int, ...], int] | None:
     return None
 
 
+def _played(m: dict, red, blue) -> bool:
+    """The API's `scored` flag is false on every match, played or not, so it
+    can't be used. A match has been played if either alliance scored or it
+    has a start time; an unplayed match is 0-0 with no start time."""
+    return bool(red[1] or blue[1] or m.get("started"))
+
+
 def _pending(raw: list[dict], event_id: int) -> list[Pending]:
     out = []
     for m in raw:
-        if m.get("round") != QUAL or m.get("scored"):
+        if m.get("round") != QUAL:
             continue
         red, blue = _alliance(m, "red"), _alliance(m, "blue")
-        if red and blue and red[0] and blue[0] and red[1] == 0 and blue[1] == 0:
+        if red and blue and red[0] and blue[0] and not _played(m, red, blue):
             out.append(Pending(event_id, (m.get("division") or {}).get("id", 0), m.get("matchnum") or 0,
                                red[0], blue[0]))
     out.sort(key=lambda p: (p.division_id, p.matchnum))
@@ -197,9 +204,7 @@ def _event_matches(raw: list[dict], event_start: float, event_end: float | None 
         red, blue = _alliance(m, "red"), _alliance(m, "blue")
         if not red or not blue or not red[0] or not blue[0]:
             continue
-        if not m.get("scored", True) and red[1] == 0 and blue[1] == 0:
-            continue
-        if m.get("scored") is False:
+        if not _played(m, red, blue):
             continue
         rows.append({
             "division_id": (m.get("division") or {}).get("id", 0),
