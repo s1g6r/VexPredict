@@ -46,7 +46,8 @@ def run(model: Model, season: Season, until_ts: float = math.inf) -> list[Record
         if m.ts >= until_ts:
             break
         p = model.predict(m)
-        out.append(Record(m, p, min(played[t] for t in m.teams)))
+        if m.dated:
+            out.append(Record(m, p, min(played[t] for t in m.teams)))
         model.update(m)
         for t in m.teams:
             played[t] += 1

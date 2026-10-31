@@ -141,3 +141,32 @@ def test_analysis_report(season, tmp_path):
     assert abs(res["score_bias"]) < 15
     path = analyze.write_report(res, tmp_path)
     assert "Fewest season matches" in open(path).read()
+
+
+def test_undated_league_matches_go_to_event_end(tmp_path):
+    """A months-long league without match times must not be processed at its
+    start date (that would let later results leak into earlier predictions)."""
+    import json
+
+    def match(n, r, b, rs, bs, started=None):
+        al = lambda color, ids, s: {"color": color, "score": s,  # noqa: E731
+                                    "teams": [{"team": {"id": i}, "sitting": False} for i in ids]}
+        return {"round": 2, "instance": 1, "matchnum": n, "scored": True, "division": {"id": 1},
+                "started": started, "alliances": [al("red", r, rs), al("blue", b, bs)]}
+
+    def event(eid, start, end, matches):
+        teams = [{"id": i, "number": f"{i}A", "grade": "High School"} for i in range(1, 5)]
+        return {"event": {"id": eid, "sku": f"X-{eid}", "name": f"E{eid}", "start": start, "end": end},
+                "teams": teams, "skills": [], "matches": matches, "rankings": []}
+
+    (tmp_path / "events").mkdir()
+    league = event(1, "2025-09-01T00:00:00Z", "2026-02-01T00:00:00Z", [match(1, (1, 2), (3, 4), 50, 40)])
+    tourney = event(2, "2025-10-01T00:00:00Z", "2025-10-01T00:00:00Z",
+                    [match(1, (1, 3), (2, 4), 30, 20, "2025-10-01T15:00:00Z")])
+    for e in (league, tourney):
+        (tmp_path / "events" / f"{e['event']['id']}.json").write_text(json.dumps(e))
+    s = load_season("x", root=tmp_path)
+    assert [m.event_id for m in s.matches] == [2, 1]
+    assert s.matches[0].dated and not s.matches[1].dated
+    recs = backtest.run(TrueSkill(), s)
+    assert [r.m.event_id for r in recs] == [2]

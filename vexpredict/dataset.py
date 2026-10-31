@@ -26,6 +26,8 @@ class Match:
     blue: tuple[int, ...]
     red_score: int
     blue_score: int
+    dated: bool = True       # False: no match times and a multi-day event (e.g. a league), so the
+                             # true order is unknown; such matches update ratings but aren't scored
 
     @property
     def is_qual(self) -> bool:
@@ -183,7 +185,10 @@ def _pending(raw: list[dict], event_id: int) -> list[Pending]:
     return out
 
 
-def _event_matches(raw: list[dict], event_start: float) -> list[dict]:
+LONG_EVENT = 2 * DAY
+
+
+def _event_matches(raw: list[dict], event_start: float, event_end: float | None = None) -> list[dict]:
     rows = []
     for m in raw:
         rnd = m.get("round")
@@ -206,14 +211,22 @@ def _event_matches(raw: list[dict], event_start: float) -> list[dict]:
     # order (all quals, then R16 -> QF -> SF -> F). Timestamps are then forced
     # to be monotone along that order so ordering is never ambiguous.
     canon = lambda r: (ROUND_ORDER[r["round"]], r["division_id"], r["instance"], r["matchnum"])  # noqa: E731
+    dated = True
     if rows and all(r["time"] is not None for r in rows):
         rows.sort(key=lambda r: (r["time"],) + canon(r))
     else:
         rows.sort(key=canon)
+        # A league or other multi-week event without match times: we can't tell
+        # when each match happened, so put them all at the end of the event
+        # (never earlier than reality, so nothing leaks backwards in time) and
+        # leave them out of the accuracy numbers.
+        if event_end is not None and event_end - event_start > LONG_EVENT:
+            event_start, dated = event_end, False
     prev = event_start
     for r in rows:
         t = r["time"] if r["time"] is not None and r["time"] >= prev else prev + 1.0
         r["time"] = prev = t
+        r["dated"] = dated
     return rows
 
 
@@ -271,13 +284,13 @@ def load_season(slug: str, root: Path | None = None) -> Season:
         pend = _pending(rec.get("matches") or [], ev.id)
         if pend:
             season.pending[ev.id] = pend
-        for r in _event_matches(rec.get("matches") or [], start):
+        for r in _event_matches(rec.get("matches") or [], start, end):
             for tid in r["red"] + r["blue"]:
                 season.teams.setdefault(tid, Team(tid, str(tid)))
             staged.append((r["time"], ev.id, r))
     staged.sort(key=lambda x: (x[0], x[1]))
     for i, (t, eid, r) in enumerate(staged):
         season.matches.append(Match(i, eid, r["division_id"], r["round"], r["instance"], r["matchnum"],
-                                    t, r["red"], r["blue"], r["red_score"], r["blue_score"]))
+                                    t, r["red"], r["blue"], r["red_score"], r["blue_score"], r["dated"]))
     season.skills.sort(key=lambda s: s.available_ts)
     return season

@@ -163,7 +163,7 @@ def run_check(season: Season, model: EPA, train_frac: float = 0.4, sims: int = 1
     train = [s for s in snaps if s.start_ts < split]
     test = [s for s in snaps if s.start_ts >= split]
     best_u, best = 0.0, math.inf
-    for u0 in (0.0, 0.1, 0.2, 0.3, 0.45, 0.6):
+    for u0 in (0.0, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1.0):
         b = np.mean([evaluate_snap(season, s, u0, noise, max(200, sims // 4), 1)["brier_sim"]
                      for s in train]) if train else 0.0
         log(f"    rating uncertainty u0={u0}: train top-{TOP_K} brier {b:.4f}")
