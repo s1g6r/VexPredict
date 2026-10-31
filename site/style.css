@@ -214,3 +214,8 @@ textarea, input[type=text] { width: 100%; font: inherit; padding: 8px; border-ra
 .tool p { margin: 0; color: var(--ink-2); }
 .tool .stat-line { font: 600 15px var(--num); color: var(--ink); font-variant-numeric: tabular-nums; }
 select { max-width: 100%; text-overflow: ellipsis; }
+.luckbar { position: relative; display: block; height: 10px; background: var(--seam); border-radius: 5px; overflow: hidden; }
+.luckbar::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--ink-2); }
+.luckbar i { position: absolute; top: 0; bottom: 0; }
+.luckbar i.pos { background: var(--good); }
+.luckbar i.neg { background: var(--red); }

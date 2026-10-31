@@ -248,6 +248,7 @@ async function eventPage(id, tab) {
   }
   const tabs = [["matches", "Matches"], ["forecast", "Ranking forecast"], ["picks", "Pick list"], ["teams", "Teams"]];
   if (iAmHere) tabs.splice(1, 0, ["brief", `Brief for ${num(me)}`]);
+  if (ev.schedule) tabs.push(["schedule", "Schedules"]);
   const played = view.matches.length, left = view.pending.length;
   app.innerHTML = `
     <div class="row"><a href="#/events">Events</a>${statusPill(ev.status)}</div>
@@ -270,6 +271,7 @@ async function eventPage(id, tab) {
   if (tab === "forecast") return forecastTab(el, view, teams);
   if (tab === "picks") return picksTab(el, view, teams);
   if (tab === "teams") return teamsTab(el, view);
+  if (tab === "schedule" && ev.schedule) return scheduleTab(el, view);
   if (tab === "brief") return briefTab(el, ev, teams);   // your matches, whatever division is on screen
   return matchesTab(el, view);
 }
@@ -327,6 +329,25 @@ function forecastTab(el, ev, teams) {
         <td class="n hide-m">${rnd(live || !done ? r.t.rating_now : r.t.rating_pre)}</td><td class="n">${r.mean_rank.toFixed(1)}</td>
         <td style="white-space:nowrap"><span class="meter"><i style="width:${r.p_captain * 100}%"></i></span>${pct(r.p_captain)}</td><td class="n hide-m">${pct(r.p_first)}</td></tr>`).join("")}
     </tbody></table></div>`;
+}
+const luckText = v => `${v > 0 ? "+" : v < 0 ? "−" : "±"}${Math.abs(v).toFixed(1)}`;
+function luckWords(v) {
+  return Math.abs(v) < 0.25 ? "about average" : v > 0 ? (v >= 1 ? "much easier than average" : "easier than average")
+    : (v <= -1 ? "much harder than average" : "harder than average");
+}
+function scheduleTab(el, ev) {
+  const rows = ev.teams.filter(t => ev.schedule[t.id] != null).map(t => ({ ...t, luck: ev.schedule[t.id] }))
+    .sort((a, b) => b.luck - a.luck);
+  const max = Math.max(1, ...rows.map(r => Math.abs(r.luck)));
+  const played = ev.matches.some(m => m.round === 2);
+  el.innerHTML = `<p class="lede">Qualification schedules are random. This shows how much each team's draw helped or hurt, in wins: how many more (or fewer) matches an average team would win with this team's partners and opponents than with a typical schedule here. It doesn't depend on how good the team itself is. Ratings are from before the event.</p>
+    <div class="panel tablewrap"><table><thead><tr><th>Team</th>${played ? `<th class="n">Rank</th><th class="n hide-m">Record</th>` : ""}<th class="n">Schedule</th><th class="hide-m" style="width:38%"><span class="sr">Bar</span></th></tr></thead><tbody>
+    ${rows.map(r => `<tr class="${myTeam() === r.id ? "mine" : ""}"><td class="t">${teamLink(r.id)}<span class="subnote">${luckWords(r.luck)}</span></td>
+      ${played ? `<td class="n">${r.rank ?? "–"}</td><td class="n hide-m">${r.record ?? "–"}</td>` : ""}
+      <td class="n"><b>${luckText(r.luck)}</b> <span class="muted">wins</span></td>
+      <td class="hide-m"><span class="luckbar"><i class="${r.luck >= 0 ? "pos" : "neg"}" style="${r.luck >= 0 ? "left:50%" : `left:${50 - 50 * Math.abs(r.luck) / max}%`};width:${50 * Math.abs(r.luck) / max}%"></i></span></td></tr>`).join("")}
+    </tbody></table></div>
+    <p class="muted">The numbers in a division add up to zero: one team's easy draw is another's hard one. See how much schedules mattered across the season on the <a href="#/accuracy">Accuracy</a> page.</p>`;
 }
 function teamsTab(el, ev) {
   const n = notes();
@@ -458,7 +479,9 @@ async function teamPage(id) {
     <h2>Matches</h2>
     ${t.events.slice().reverse().map(eid => {
       const ms = t.matches.filter(m => m.event === eid);
-      return `<section class="panel"><h3 style="margin-top:0"><a href="#/event/${eid}">${esc(evNames[eid] || "Event " + eid)}</a></h3><ul class="list">
+      const lk = t.schedule?.[eid];
+      return `<section class="panel"><h3 style="margin-top:0"><a href="#/event/${eid}">${esc(evNames[eid] || "Event " + eid)}</a></h3>
+        ${lk != null ? `<p class="muted" style="margin-top:-4px">Qualification schedule: <a href="#/event/${eid}/schedule"><b>${luckText(lk)} wins</b></a>, ${luckWords(lk)}.</p>` : ""}<ul class="list">
         ${ms.slice().reverse().map(m => {
           const res = m.score > m.opp_score ? "W" : m.score < m.opp_score ? "L" : "T";
           const hit = m.score !== m.opp_score ? ((m.p_win >= 0.5) === (res === "W") ? "hit" : "miss") : "";
@@ -567,6 +590,12 @@ async function accuracy() {
       ${c?.divisions ? `<tr><td>Before the first match</td><td class="n">${f2(c.spearman_sim)}</td><td class="n">${f2(c.spearman_standings)}</td></tr>` : ""}
       ${h?.divisions ? `<tr><td>Halfway through quals</td><td class="n">${f2(h.spearman_sim)}</td><td class="n">${f2(h.spearman_standings)}</td></tr>` : ""}
       </tbody></table><p class="muted">Rank correlation between predicted and actual final rankings: 1 is a perfect order, 0 is no better than random.</p></div>`;
+  }
+  const au = META.schedule_audit;
+  if (au) {
+    html += `<h2>How much does the schedule matter?</h2><div class="panel">
+      <p>Qualification schedules are random, so some teams get easier partners and opponents than others. Across ${au.teams.toLocaleString()} team results at finished events this season, the luck of the draw was worth <b>±${au.sd} wins</b> for a typical team and up to <b>${au.max} wins</b> at the extremes. ${pct(au.share_over_1)} of teams got a schedule at least one full win easier or harder than average.</p>
+      <p>It shows up in the rankings. Teams that finished in the top quarter of their division averaged a schedule of ${luckText(au.top_quarter)} wins; the bottom quarter averaged ${luckText(au.bottom_quarter)}. The correlation between schedule luck and final rank is ${f2(au.corr)} (negative means easier schedules finish higher). Each event's "Schedules" tab shows the numbers for every team.</p></div>`;
   }
   html += `<h2>How the rating works</h2><div class="panel"><p>Each team has one number: the points it adds to its alliance in an average match. Before a match, the two partners' numbers are added up to predict each alliance's score. Afterwards, each team's number moves toward what actually happened. It moves a lot for new teams and less as a team plays more, and one freak result can only move it so far.</p>
     <p>Skills runs are solo, so they show what a robot can do on its own. A team's published skills scores set its starting rating and pull its rating toward them at the start of each new event. That matters most early in the season, when teams have played few matches.</p>

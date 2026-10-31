@@ -156,3 +156,25 @@ def test_qualification_labels():
                                                       "Illinois State Championship (MS)"), (1,)))
     got = [r["target"] for r in hub.qualifications(s)[1]]
     assert got == ["Illinois State Championship (HS)", "Region championship (States)"]
+
+
+def test_schedule_luck():
+    """Easy draws (strong partners, weak opponents) score positive, hard draws
+    negative; across a division the effects cancel out."""
+    import random
+    from types import SimpleNamespace as M
+    from vexpredict import hub
+    rng = random.Random(1)
+    rating = {t: rng.uniform(10, 40) for t in range(1, 25)}
+    rating[100], rating[101] = 80.0, 2.0          # one star, one very weak team
+    teams = list(rating)
+    group = []
+    for _ in range(10):
+        rng.shuffle(teams)
+        group += [M(red=tuple(teams[i:i + 2]), blue=tuple(teams[i + 2:i + 4])) for i in range(0, len(teams) - 3, 4)]
+    # team 1 always plays with the star against the weak team; team 2 the reverse
+    group += [M(red=(1, 100), blue=(101, 3)) for _ in range(3)] + [M(red=(2, 101), blue=(100, 4)) for _ in range(3)]
+    luck = hub.schedule_luck({1: group}, rating, scale=10.0)
+    assert abs(sum(v["luck"] for v in luck.values())) < 1e-9
+    assert luck[1]["luck"] > 1.0 and luck[2]["luck"] < -1.0
+    assert luck[1]["n"] == sum(1 in x.red + x.blue for x in group)

@@ -80,6 +80,7 @@ anything is installed. Stop it any time with Ctrl-C and rerun it to continue.
 | Qualify | Who has earned a spot at each championship (States, Worlds), from the qualifications VEX lists on each award, and the best teams in each region still without one. Your own team's status on top |
 | Skills | Season skills standings (best single-event driving + autonomous score), by region, with a "teams without a qualifying spot" filter |
 | Plan | Every upcoming event sorted by date, filtered by distance from your team, with how many High School teams have registered, the field's median and top-8 ratings, and where your team would rank in it |
+| Event, Schedules | How much each team's random qualification schedule helped or hurt, in wins (what an average team would win with those partners and opponents, against a typical draw). The Accuracy page sums it up for the season |
 | Ratings | All HS teams, filterable by region |
 | Accuracy | Backtest results vs TrueSkill, OPR and CCWM, plus how good the ranking forecasts are |
 
@@ -132,7 +133,7 @@ tendencies come from each team's earlier events.
 ## How it's tested
 
 - **Backtest and simulator check:** described above. Both are rerun from the raw data with one command each.
-- **Tests (`python3 -m pytest -q`, 35 of them):**
+- **Tests (`python3 -m pytest -q`, 37 of them):**
   - TrueSkill matches the reference `trueskill` package.
   - No model's past predictions change when future matches are added (all seven models, including the adaptive mix).
   - OPR recovers the true strengths on synthetic data.

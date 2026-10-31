@@ -150,4 +150,42 @@ def km(a: tuple[float, float], b: tuple[float, float]) -> float:
     return 6371 * 2 * math.asin(math.sqrt(h))
 
 
-__all__ = ["qualify_data", "skills_data", "plan_data", "qualifications", "best_skills", "km"]
+__all__ = ["schedule_luck", "qualify_data", "skills_data", "plan_data", "qualifications", "best_skills", "km"]
+
+
+def schedule_luck(groups: dict[int, list], rating: dict[int, float], scale: float) -> dict[int, dict]:
+    """How much easier or harder each team's qualification schedule was, in wins.
+
+    For every qualification match a team plays, take the chance that an
+    *average* team (the division's mean pre-event rating) would win with this
+    team's actual partner against its actual opponents. The sum is the wins an
+    average team would expect from this schedule; subtracting the division's
+    typical value per match leaves the schedule's effect alone, separate from
+    how good the team itself is. Positive = an easier draw than average.
+
+    `groups` maps division -> scheduled quals (anything with .red and .blue),
+    `rating` holds pre-event ratings, `scale` converts a rating gap to a win
+    chance (logistic), as the model does."""
+    out: dict[int, dict] = {}
+    for _, group in groups.items():
+        teams = {t for x in group for t in x.red + x.blue}
+        if len(teams) < 4 or not group:
+            continue
+        r = {t: rating.get(t, 0.0) for t in teams}
+        mean = sum(r.values()) / len(r)
+        exp: dict[int, float] = defaultdict(float)
+        n: dict[int, int] = defaultdict(int)
+        for x in group:
+            for side, other in ((x.red, x.blue), (x.blue, x.red)):
+                opp = sum(r[t] for t in other)
+                for t in side:
+                    partners = sum(r[p] for p in side if p != t)
+                    gap = (mean + partners) - opp
+                    if len(side) != len(other):          # 1-team alliances in tiny events
+                        gap = mean + partners - opp * len(side) / max(1, len(other))
+                    exp[t] += 1 / (1 + math.exp(-gap / scale))
+                    n[t] += 1
+        per_match = sum(exp.values()) / max(1, sum(n.values()))
+        for t in exp:
+            out[t] = {"luck": exp[t] - per_match * n[t], "n": n[t]}
+    return out

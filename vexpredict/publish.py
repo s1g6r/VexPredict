@@ -226,6 +226,8 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
 
     # --- events -----------------------------------------------------------
     index = []
+    sched_team: dict[int, dict[str, float]] = defaultdict(dict)
+    audit_rows: list[tuple[float, float]] = []    # (schedule luck, final rank as a share of the field)
     for eid, ev in sorted(season.events.items(), key=lambda kv: kv[1].start):
         ms = by_event.get(eid, [])
         pend = season.pending.get(eid, [])
@@ -310,6 +312,21 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
         elif not ms and status in ("upcoming", "live") and len(teams) >= 8 and ev.start - now_ts < SIM_AHEAD:
             rec["sim_pre"] = _merge([(0, run_sim(season, teams, {t: rating_now(t) for t in teams}, played_n,
                                                  model.scale.std, noise, u0, now_ts, eid, played=[]))])
+        if eid in snaps:
+            # how much each team's qualification schedule helped or hurt, from pre-event ratings
+            _, srating, _, sstd, _ = snaps[eid]
+            pre = {t: srating[t] if t in srating else rating_now(t) for t in teams}
+            luck = hub.schedule_luck(_qual_groups(ms, pend), pre, model.prob_k * sstd)
+            if luck:
+                rec["schedule"] = {str(t): round(v["luck"], 2) for t, v in luck.items()}
+                for t, v in luck.items():
+                    sched_team[t][str(eid)] = round(v["luck"], 2)
+                if status == "done" and ranks:
+                    for t, v in luck.items():
+                        r = ranks.get(t)
+                        if r and r.rank:
+                            field = sum(1 for x in ranks.values() if x.division_id == r.division_id)
+                            audit_rows.append((v["luck"], r.rank / max(1, field)))
         _write(out / "events" / f"{eid}.json", rec)
         index.append({"id": eid, "sku": ev.sku, "name": ev.name, "date": _iso(ev.start), "status": status,
                       "teams": len(teams), "hs_teams": len(hs), "matches": len(ms), "worlds": ev.is_worlds,
@@ -357,6 +374,7 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
             "id": t, "number": tm.number, "name": tm.name, "region": tm.region, "country": tm.country,
             "rating": _r(current.get(t)), "rank": rank_of.get(t), "skills": best_skills.get(t),
             "history": history.get(t, []), "matches": team_matches.get(t, []),
+            "schedule": sched_team.get(t, {}),
             "events": sorted({x["event"] for x in team_matches.get(t, [])},
                              key=lambda e: season.events[e].start)})
     names = {str(t): season.teams[t].number for t in season.teams}
@@ -372,7 +390,16 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
                 break
     _write(out / "accuracy.json", acc)
 
-    meta = {"season": season.name, "slug": slug, "synthetic": season.synthetic,
+    audit = None
+    if len(audit_rows) >= 50:
+        lk = np.array([a for a, _ in audit_rows])
+        rk = np.array([b for _, b in audit_rows])
+        q1, q3 = np.quantile(rk, 0.25), np.quantile(rk, 0.75)
+        audit = {"teams": len(lk), "sd": _r(lk.std(), 2), "max": _r(np.abs(lk).max(), 2),
+                 "share_over_1": _r(float(np.mean(np.abs(lk) >= 1.0)), 3),
+                 "corr": _r(np.corrcoef(lk, rk)[0, 1], 3),
+                 "top_quarter": _r(lk[rk <= q1].mean(), 2), "bottom_quarter": _r(lk[rk >= q3].mean(), 2)}
+    meta = {"season": season.name, "slug": slug, "synthetic": season.synthetic, "schedule_audit": audit,
             "generated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="minutes"),
             "model": {"name": model.name, **model_info, "score_noise": [noise.c0, noise.c1], "u0": u0,
                       "score_std": model.scale.std,

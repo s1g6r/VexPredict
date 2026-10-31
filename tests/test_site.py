@@ -41,7 +41,7 @@ def test_every_page_renders_without_errors(server):
     me = ev["pending"][0]["red"][0]
     num_me = next(t["number"] for t in ev["teams"] if t["id"] == me)
     pages = ["#/", "#/events", "#/leaderboard", "#/accuracy", "#/event/50040/matches", "#/event/50040/forecast",
-             "#/event/50040/picks", "#/event/50040/teams", "#/event/50040/brief", "#/event/90000/forecast",
+             "#/event/50040/picks", "#/event/50040/teams", "#/event/50040/brief", "#/event/50000/schedule", "#/event/90000/forecast",
              "#/event/50000/forecast", f"#/team/{me}", "#/events?s=league", "#/qualify", "#/skills", "#/plan", "#/nope"]
     with pw.sync_playwright() as p:
         b = p.chromium.launch()
@@ -82,6 +82,12 @@ def test_every_page_renders_without_errors(server):
         sel = page.locator("#div")
         sel.select_option(mine)
         page.wait_for_timeout(200)
+        # schedules: every team at a finished event gets a number, and they add up to zero
+        page.goto(url + "#/event/50000/schedule")
+        page.wait_for_timeout(250)
+        cells = page.locator("tbody td.n b").all_inner_texts()
+        vals = [float(c.replace("−", "-").replace("±", "")) for c in cells]
+        assert len(vals) > 10 and abs(sum(vals)) < 0.06 * len(vals)
         # qualification: a championship is listed with qualified teams and teams next in line
         page.goto(url + "#/qualify")
         page.wait_for_timeout(250)
