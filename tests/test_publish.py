@@ -178,3 +178,38 @@ def test_schedule_luck():
     assert abs(sum(v["luck"] for v in luck.values())) < 1e-9
     assert luck[1]["luck"] > 1.0 and luck[2]["luck"] < -1.0
     assert luck[1]["n"] == sum(1 in x.red + x.blue for x in group)
+
+
+def test_web_pairs(published):
+    """Every thread in the web is a real partnership, counted right, in the
+    order the pairs first played together."""
+    season, out = published
+    w = json.loads((out / "web.json").read_text())
+    t, p = w["t"], w["p"]
+    ids = {num: tid for tid, tm in season.teams.items() for num in [tm.number]}
+    together = {}
+    first = {}
+    for m in season.matches:
+        for side in (m.red, m.blue):
+            key = tuple(sorted(side))
+            together[key] = together.get(key, 0) + 1
+            first.setdefault(key, m.idx)
+    seen = []
+    for i in range(0, len(p), 5):
+        a, b, n, wins = (ids[t["num"][p[i]]], ids[t["num"][p[i + 1]]], p[i + 2], p[i + 3])
+        key = tuple(sorted((a, b)))
+        assert together[key] == n and 0 <= wins <= n
+        seen.append(first[key])
+    assert len(seen) == len(together) and seen == sorted(seen)
+    assert w["champ"] == []          # this season's Worlds is still being played
+
+
+def test_world_champions(tmp_path):
+    from vexpredict.web import world_champions
+    generate(tmp_path, n_teams=200, n_events=12, n_skills_events=2, seed=6)
+    s = load_season("t", root=tmp_path)
+    champ = world_champions(s)
+    worlds = next(e for e in s.events.values() if e.is_worlds)
+    final = max((m for m in s.matches if m.event_id == worlds.id and m.round == 5), key=lambda m: m.ts)
+    winner = final.red if final.red_score >= final.blue_score else final.blue
+    assert len(champ) == 2 and set(champ) == set(winner)

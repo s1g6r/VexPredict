@@ -30,7 +30,7 @@ from .config import REPORTS_DIR, ROOT, slugify
 from .dataset import DAY, LONG_EVENT, Match, Season, load_season
 from .models.base import Model
 from .models.epa import EPAMix, EPASkills, build_epa, fit_skills_map
-from . import hub
+from . import hub, web
 from .tuned import tuned_settings
 from .simulator import (ScoreNoise, SimInputs, captain_count, fit_score_noise, simulate,
                         standings_from_matches, standings_from_rankings, team_rates)
@@ -357,6 +357,8 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
     _write(out / "qualify.json", hub.qualify_data(season, now_ts))
     _write(out / "skills.json", hub.skills_data(season))
     _write(out / "plan.json", hub.plan_data(season, lambda t: rating_now(t) if played_n.get(t) else None, now_ts))
+    # the alliance web for The Web (app.2360arachnid.com)
+    _write(out / "web.json", web.web_data(season, slug, lambda t: rating_now(t) if played_n.get(t) else None, now_ts))
 
     team_matches: dict[int, list] = defaultdict(list)
     for m in season.matches:
