@@ -1,10 +1,12 @@
 # VexPredict
 
-Calibrated match prediction for **VEX V5RC High School**: who wins, by how much,
-and how sure we are, with published accuracy against the ratings every other
-VEX app uses (TrueSkill, OPR, CCWM). There's also a ranking forecast for every
-event (division by division), a match brief for your team, and a live pick list
-for alliance selection.
+Free season tools for **VEX V5RC High School**, live at
+[stats.2360arachnid.com](https://stats.2360arachnid.com):
+
+- **Predict:** calibrated match predictions (who wins, by how much, how sure), with published accuracy against the ratings other VEX apps use (TrueSkill, OPR, CCWM). There's also a division-by-division ranking forecast for every event, a match brief for your team, and a live pick list for alliance selection.
+- **Qualify:** who has earned a spot at States or Worlds, and who's next in line on skills.
+- **Skills:** season standings by region, including teams still without a spot.
+- **Plan:** upcoming events near you, how strong each field is, and where you'd rank.
 
 ```
 fetch ──> data/raw/<season>/events/*.json          (VEX Events API, resumable)
@@ -75,6 +77,9 @@ anything is installed. Stop it any time with Ctrl-C and rerun it to continue.
 | Event, Brief | For your team: each upcoming match, your partner and opponents' ratings, autonomous rates, skills and your scouting notes |
 | Event, Pick list | Available teams ranked by rating plus an adjustable weight on autonomous. Tap "Picked" as alliance selection happens and the list reorders |
 | Team | Rating through the season, match log, scouting tags and notes |
+| Qualify | Who has earned a spot at each championship (States, Worlds), from the qualifications VEX lists on each award, and the best teams in each region still without one. Your own team's status on top |
+| Skills | Season skills standings (best single-event driving + autonomous score), by region, with a "teams without a qualifying spot" filter |
+| Plan | Every upcoming event sorted by date, filtered by distance from your team, with how many High School teams have registered, the field's median and top-8 ratings, and where your team would rank in it |
 | Ratings | All HS teams, filterable by region |
 | Accuracy | Backtest results vs TrueSkill, OPR and CCWM, plus how good the ranking forecasts are |
 
@@ -127,7 +132,7 @@ tendencies come from each team's earlier events.
 ## How it's tested
 
 - **Backtest and simulator check:** described above. Both are rerun from the raw data with one command each.
-- **Tests (`python3 -m pytest -q`, 34 of them):**
+- **Tests (`python3 -m pytest -q`, 35 of them):**
   - TrueSkill matches the reference `trueskill` package.
   - No model's past predictions change when future matches are added (all seven models, including the adaptive mix).
   - OPR recovers the true strengths on synthetic data.
@@ -136,6 +141,7 @@ tendencies come from each team's earlier events.
   - The site shows exactly the pre-match predictions, with the backtest's calibration applied.
   - League and missing-time ordering never puts a match earlier than reality.
   - Divisions are forecast separately.
+  - Every qualification the site lists is a real award win; skills ranks follow the official tiebreak; the planner sees calendar-only events.
   - The data pull is checked against a fake API (pagination, HTTP 429, resume, bad token), and the quick event-day refresh picks the right events.
   - Events with leftover unplayed matches don't stay "live" after they end.
   - Every site page loads in a real browser with no errors and no sideways scrolling on a phone, including switching divisions.
