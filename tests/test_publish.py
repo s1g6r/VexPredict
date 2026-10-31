@@ -113,3 +113,31 @@ def test_old_unplayed_matches_dont_keep_an_event_live(tmp_path):
     e2 = json.loads((later / "events" / "50001.json").read_text())
     assert e1["status"] == "live" and len(e1["pending"]) == 3
     assert e2["status"] == "done" and not e2["pending"] and "sim_live" not in e2
+
+
+def test_hub_files(published):
+    """Qualification, skills standings and the event planner come straight
+    from the published results."""
+    season, out = published
+    q = json.loads((out / "qualify.json").read_text())
+    names = {t["name"] for t in q["targets"]}
+    assert {"Demo State Championship", "World Championship"} <= names
+    # every listed qualification is a real award win by that team
+    wins = {(a.event_id, t) for a in season.awards if a.qualifications for t in a.team_ids}
+    for tid, rec in q["teams"].items():
+        assert season.teams[int(tid)].is_hs
+        for r in rec["quals"]:
+            assert (r["event_id"], int(tid)) in wins
+    sk = json.loads((out / "skills.json").read_text())
+    assert [r["rank"] for r in sk] == list(range(1, len(sk) + 1))
+    assert all(sk[i]["score"] >= sk[i + 1]["score"] for i in range(len(sk) - 1))
+    assert all(r["score"] == r["auto"] + r["driver"] for r in sk)
+    qualified = {int(t) for t in q["teams"]}
+    assert any(r["qualified"] for r in sk) and all(bool(r["qualified"]) == (r["id"] in qualified) for r in sk)
+    plan = json.loads((out / "plan.json").read_text())
+    ids = {e["id"] for e in plan["events"]}
+    assert 90000 in ids and {95000 + k for k in range(12)} <= ids           # registered and calendar-only
+    up = next(e for e in plan["events"] if e["id"] == 90000)
+    assert up["hs"] == len(up["teams"]) and up["ratings"] == sorted(up["ratings"], reverse=True)
+    assert "hs" not in next(e for e in plan["events"] if e["id"] == 95000)   # no team list yet
+    assert plan["team_loc"] and all(len(v) == 2 for v in plan["team_loc"].values())

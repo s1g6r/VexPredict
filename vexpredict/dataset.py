@@ -60,6 +60,11 @@ class Event:
     end: float
     level: str
     divisions: tuple[tuple[int, str], ...] = ()   # (id, name) as listed by the API
+    city: str = ""
+    region: str = ""
+    country: str = ""
+    lat: float | None = None
+    lon: float | None = None
 
     @property
     def is_worlds(self) -> bool:
@@ -125,10 +130,28 @@ class Team:
     country: str = ""
     name: str = ""
     region: str = ""
+    city: str = ""
+    lat: float | None = None
+    lon: float | None = None
 
     @property
     def is_hs(self) -> bool:
         return self.grade == HIGH_SCHOOL
+
+
+@dataclass(frozen=True)
+class Award:
+    event_id: int
+    title: str
+    qualifications: tuple[str, ...]   # championships this award qualifies for, as the API lists them
+    team_ids: tuple[int, ...]
+    classification: str = ""          # champion / finalist / ... for tournament awards
+    available_ts: float = 0.0         # public after the event ends
+
+    @property
+    def name(self) -> str:
+        """'Excellence Award (VRC/VEXU/VAIRC)' -> 'Excellence Award'."""
+        return self.title.split(" (")[0].strip()
 
 
 @dataclass
@@ -141,6 +164,8 @@ class Season:
     rankings: dict[int, dict[int, Ranking]] = field(default_factory=dict)   # event -> team -> final/current
     pending: dict[int, list[Pending]] = field(default_factory=dict)         # event -> unplayed quals
     event_teams: dict[int, list[int]] = field(default_factory=dict)        # event -> registered teams
+    awards: list[Award] = field(default_factory=list)
+    calendar: dict[int, Event] = field(default_factory=dict)               # every event of the season
     synthetic: bool = False
 
     def event_matches(self, event_id: int) -> list[Match]:
@@ -256,6 +281,19 @@ def _event_matches(raw: list[dict], event_start: float, event_end: float | None 
     return rows
 
 
+def _event(e: dict) -> Event:
+    start = _ts(e.get("start")) or 0.0
+    end = _ts(e.get("end")) or start
+    divs = tuple((d["id"], d.get("name") or f"Division {d['id']}") for d in e.get("divisions") or []
+                 if d.get("id") is not None)
+    loc = e.get("location") or {}
+    coords = loc.get("coordinates") or {}
+    lat, lon = coords.get("lat"), coords.get("lon")
+    return Event(e["id"], e.get("sku", ""), e.get("name", ""), start, end, e.get("level") or "", divs,
+                 loc.get("city") or "", loc.get("region") or "", loc.get("country") or "",
+                 float(lat) if lat is not None else None, float(lon) if lon is not None else None)
+
+
 def load_season(slug: str, root: Path | None = None) -> Season:
     base = root or season_dir(slug)
     meta_path = base / "season.json"
@@ -266,6 +304,10 @@ def load_season(slug: str, root: Path | None = None) -> Season:
         name = meta["season"].get("name", slug)
         synthetic = bool(meta.get("synthetic"))
     season = Season(name=name, synthetic=synthetic)
+    if meta_path.exists():
+        for e in meta.get("calendar") or []:
+            if e.get("id") is not None:
+                season.calendar[e["id"]] = _event(e)
     staged: list[tuple[float, int, dict]] = []
     files = sorted((base / "events").glob("*.json"))
     if not files:
@@ -275,10 +317,9 @@ def load_season(slug: str, root: Path | None = None) -> Season:
         e = rec["event"]
         start = _ts(e.get("start")) or 0.0
         end = _ts(e.get("end")) or start
-        divs = tuple((d["id"], d.get("name") or f"Division {d['id']}") for d in e.get("divisions") or []
-                     if d.get("id") is not None)
-        ev = Event(e["id"], e.get("sku", ""), e.get("name", ""), start, end, e.get("level") or "", divs)
+        ev = _event(e)
         season.events[ev.id] = ev
+        season.calendar[ev.id] = ev
         for t in rec.get("teams") or []:
             loc = t.get("location") or {}
             team = season.teams.setdefault(t["id"], Team(t["id"], t.get("number", str(t["id"]))))
@@ -286,6 +327,10 @@ def load_season(slug: str, root: Path | None = None) -> Season:
             team.country = loc.get("country") or team.country
             team.region = loc.get("region") or team.region
             team.name = t.get("team_name") or team.name
+            team.city = loc.get("city") or team.city
+            coords = loc.get("coordinates") or {}
+            if coords.get("lat") is not None and coords.get("lon") is not None:
+                team.lat, team.lon = float(coords["lat"]), float(coords["lon"])
             season.event_teams.setdefault(ev.id, []).append(t["id"])
         by_team: dict[int, dict[str, int]] = {}
         for s in rec.get("skills") or []:
@@ -309,6 +354,12 @@ def load_season(slug: str, root: Path | None = None) -> Season:
                                  int(r.get("wp") or 0), int(r.get("ap") or 0), int(r.get("sp") or 0))
         if ranks:
             season.rankings[ev.id] = ranks
+        for a in rec.get("awards") or []:
+            winners = tuple(w["team"]["id"] for w in a.get("teamWinners") or [] if (w.get("team") or {}).get("id"))
+            if not winners:
+                continue
+            season.awards.append(Award(ev.id, a.get("title") or "", tuple(a.get("qualifications") or ()),
+                                       winners, a.get("classification") or "", end + DAY))
         pend = _pending(rec.get("matches") or [], ev.id)
         if pend:
             season.pending[ev.id] = pend

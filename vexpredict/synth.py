@@ -9,6 +9,16 @@ import random
 from pathlib import Path
 
 DAY = 86400
+STATES = ["Illinois", "Indiana", "Wisconsin", "Ohio", "Michigan", "Iowa", "Missouri", "Kentucky"]
+CENTERS = {"Illinois": (40.0, -89.2), "Indiana": (39.9, -86.3), "Wisconsin": (44.5, -89.5), "Ohio": (40.4, -82.8),
+           "Michigan": (43.3, -84.5), "Iowa": (42.0, -93.5), "Missouri": (38.5, -92.5), "Kentucky": (37.5, -85.3)}
+
+
+def _loc(state: str, rng: random.Random, spread: float = 1.2) -> dict:
+    lat, lon = CENTERS[state]
+    return {"city": f"Demo City {state[:3]}", "region": state, "country": "United States",
+            "coordinates": {"lat": round(lat + rng.uniform(-spread, spread), 1),
+                            "lon": round(lon + rng.uniform(-spread, spread), 1)}}
 
 
 def _iso(ts: float) -> str:
@@ -30,8 +40,12 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
             "growth": rng.uniform(0.2, 1.4),            # improvement over the season
             "auton": rng.random(),                      # autonomous quality (AWP / AP)
             "name": f"Demo Robotics {i + 1}",
-            "state": ["Illinois", "Indiana", "Wisconsin", "Ohio", "Michigan", "Iowa", "Missouri", "Kentucky"][i % regions],
+            "state": STATES[i % regions],
         })
+    geo = random.Random(seed + 1)   # locations and the calendar use their own stream so results don't shift
+    for t in teams:
+        t["location"] = _loc(t["state"], geo)
+    calendar = []
     by_region = [[t for t in teams if t["region"] == r] for r in range(regions)]
 
     def strength(t: dict, ts: float) -> float:
@@ -48,6 +62,7 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
             pool = sorted(teams, key=lambda t: -strength(t, start))
             pool = [t for t in pool if t["grade"] == "High School"][:80]
             name = "Demo World Championship (synthetic)"
+            ev_state = "Missouri"
         else:
             start = t0 + rng.uniform(0, season_days) * DAY
             r = rng.randrange(regions)
@@ -56,6 +71,7 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
             others = rng.sample(teams, k - len(local))
             pool = list({t["id"]: t for t in local + others}.values())
             name = f"Demo Tournament {e}"
+            ev_state = STATES[r]
         end = start + DAY
         eid = 50000 + e
         matches, mid = [], 0
@@ -81,6 +97,7 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
 
         ts = start + 3600
         rankings = []
+        champions: list = []
         # Worlds is split into divisions that rank and pick alliances separately
         divs = [(1, pool[0::2]), (2, pool[1::2])] if worlds else [(1, pool)]
         for div, dpool in divs:
@@ -140,6 +157,8 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
                     ts += 420
                     nxt.append(a if s[0] >= s[1] else b)
                 current = nxt
+            if current:
+                champions.append((div, current[0]))
         skills = []
         for t in pool:
             st = strength(t, start)
@@ -151,14 +170,37 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
             if rng.random() < 0.6:
                 skills.append({"team": {"id": t["id"], "name": t["number"]}, "type": "programming",
                                "score": max(0, int(rng.gauss(1.0 * st, 0.5 * st)))})
+        # Awards: every third event qualifies its winners for the (demo) state
+        # championship, every tenth is a signature-style event that qualifies for Worlds.
+        signature = not worlds and e % 10 == 5
+        quals = [] if worlds else (["World Championship"] if signature
+                                   else ["Demo State Championship"] if e % 3 == 0 else [])
+        best_skills: dict[int, int] = {}
+        for sk in skills:
+            best_skills[sk["team"]["id"]] = best_skills.get(sk["team"]["id"], 0) + sk["score"]
+        top_rank = next(r for r in rankings if r["rank"] == 1)["team"]
+        awards = [{"id": 1, "title": "Excellence Award - High School (VRC/VEXU/VAIRC)", "qualifications": quals,
+                   "teamWinners": [{"team": top_rank, "division": {"id": 1}}]}]
+        for div, alliance in champions:
+            awards.append({"id": 2, "title": "Tournament Champions (VRC/VEXU/VAIRC)", "classification": "champion",
+                           "qualifications": quals,
+                           "teamWinners": [{"team": {"id": t["id"], "name": t["number"]}, "division": {"id": div}}
+                                           for t in alliance]})
+        if best_skills:
+            top = max(best_skills, key=best_skills.get)
+            awards.append({"id": 3, "title": "Robot Skills Champion (VRC/VEXU/VAIRC)", "qualifications": quals[:1],
+                           "teamWinners": [{"team": {"id": top}, "division": {"id": 1}}]})
+        event = {"id": eid, "sku": f"DEMO-{eid}", "name": name, "start": _iso(start),
+                 "end": _iso(end), "level": "World" if worlds else ("Signature" if signature else "Other"),
+                 "location": _loc(ev_state, geo, 0.8),
+                 "divisions": [{"id": d, "name": ("Science", "Technology")[d - 1] if worlds else "Division 1"}
+                               for d, _ in divs]}
+        calendar.append(event)
         rec = {
-            "event": {"id": eid, "sku": f"DEMO-{eid}", "name": name, "start": _iso(start),
-                      "end": _iso(end), "level": "World" if worlds else "Other",
-                      "divisions": [{"id": d, "name": ("Science", "Technology")[d - 1] if worlds else "Division 1"}
-                                    for d, _ in divs]},
+            "event": event,
             "teams": [{"id": t["id"], "number": t["number"], "grade": t["grade"], "team_name": t["name"],
-                       "location": {"country": "United States", "region": t["state"]}} for t in pool],
-            "skills": skills, "matches": matches, "rankings": rankings, "final": True,
+                       "location": t["location"]} for t in pool],
+            "skills": skills, "matches": matches, "rankings": rankings, "awards": awards, "final": True,
         }
         (out / "events" / f"{eid}.json").write_text(json.dumps(rec))
     # Skills-only events (no matches): how many real teams first post a score.
@@ -177,10 +219,20 @@ def generate(out: Path, n_teams: int = 360, n_events: int = 90, seed: int = 0,
                                "score": max(0, int(rng.gauss(1.0 * st, 0.5 * st)))})
         rec = {"event": {"id": eid, "sku": f"DEMO-{eid}", "name": f"Demo Skills Day {e}",
                          "start": _iso(start), "end": _iso(start), "level": "Other", "divisions": []},
-               "teams": [{"id": t["id"], "number": t["number"], "grade": t["grade"]} for t in pool],
-               "skills": skills, "matches": [], "final": True}
+               "teams": [{"id": t["id"], "number": t["number"], "grade": t["grade"], "location": t["location"]}
+                         for t in pool],
+               "skills": skills, "matches": [], "awards": [], "final": True}
+        calendar.append(rec["event"])
         (out / "events" / f"{eid}.json").write_text(json.dumps(rec))
-    (out / "season.json").write_text(json.dumps({"season": {"id": 0, "name": "Synthetic season"}, "synthetic": True}))
+    # Events later in the season that nobody has registered for yet (calendar only).
+    for k in range(12):
+        start = t0 + (season_days + 25 + 8 * k) * DAY
+        state = STATES[k % regions]
+        calendar.append({"id": 95000 + k, "sku": f"DEMO-{95000 + k}", "name": f"Demo Spring Classic {k + 1}",
+                         "start": _iso(start), "end": _iso(start), "level": "Signature" if k == 3 else "Other",
+                         "location": _loc(state, geo, 0.8), "divisions": [{"id": 1, "name": "Division 1"}]})
+    (out / "season.json").write_text(json.dumps({"season": {"id": 0, "name": "Synthetic season"}, "synthetic": True,
+                                                 "calendar": calendar}))
     return {"teams": teams, "truth_start": truth, "truth_by_event": truth_by_event}
 
 
@@ -233,9 +285,9 @@ def add_upcoming(out: Path, after_ts: float, teams: list[dict], n: int = 36, see
     start = after_ts + 10 * DAY
     rec = {"event": {"id": eid, "sku": f"DEMO-{eid}", "name": "Demo Invitational (upcoming)",
                      "start": _iso(start), "end": _iso(start + DAY), "level": "Other",
-                     "divisions": [{"id": 1, "name": "Division 1"}]},
+                     "location": _loc("Illinois", rng, 0.5), "divisions": [{"id": 1, "name": "Division 1"}]},
            "teams": [{"id": t["id"], "number": t["number"], "grade": t["grade"], "team_name": t["name"],
-                      "location": {"country": "United States", "region": t["state"]}} for t in pool],
+                      "location": t.get("location") or {"country": "United States", "region": t["state"]}} for t in pool],
            "skills": [], "matches": [], "rankings": [], "final": False}
     (out / "events" / f"{eid}.json").write_text(json.dumps(rec))
     return eid
