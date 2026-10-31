@@ -94,12 +94,15 @@ browser. To share notes with teammates, use "Export all notes" and then "Import 
 | Win rate | Sanity-check baseline |
 | EPA | A rating in points (expected contribution to the alliance score). The update size shrinks with experience and grows again after a long break (rebuilds). The win-probability scale follows the season's score spread |
 | EPA + skills prior | Published skills results (solo runs) set a team's starting rating and re-anchor it at each new event. The mapping is fit on training events only |
-| **EPA + skills, adaptive** (the site) | Several versions run side by side, from "judge a team by its alliance's score" to "judge it by the winning margin". Each prediction leans on whichever version has predicted recent matches best, using past matches only. Early in Push Back, own score predicted best. Once fields got strong and scoring was contested, the margin did (by Worlds, all the weight was on margin). Predicted scores take the total from the own-score version and the margin from the mix |
+| **EPA + skills, adaptive** (the site) | Several versions run side by side, from "judge a team by its alliance's score" to "judge it by the winning margin". Each prediction leans on whichever version has predicted recent matches best, using past matches only. In September and October of Push Back, own score predicted best. From December, once fields got strong and scoring was contested, the margin did: at Worlds, 97% of the weight was on the margin version. Predicted scores take the total from the own-score version and the margin from the mix |
 
 Why the adaptive model matters: with own-score updates alone, EPA led TrueSkill
 by 3.5 points in January but fell behind it by March and at Worlds. The tuning
 period (the first 40% of the season) can't see that change. The online mix
-follows it without looking ahead, and is ahead of TrueSkill in every month.
+follows it without looking ahead. It is ahead of TrueSkill in every month from
+December to May, by 3 to 5 points; the summer months have under 50 matches.
+Its score predictions miss by 19.8 points per alliance on average, against
+22.6 for in-event OPR.
 
 The **event simulator** plays out the remaining schedule 1,500 times using the
 ratings, rating uncertainty, a fitted score-noise model, and V5RC ranking rules:
