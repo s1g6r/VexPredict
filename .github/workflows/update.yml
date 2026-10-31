@@ -22,6 +22,7 @@ concurrency:
 
 env:
   SEASON: "Override"
+  SLUG: "override"        # cache keys use the slug, same as the Backtest workflow
   TUNE_FROM: "Push Back"
 
 jobs:
@@ -38,8 +39,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: data/raw
-          key: raw-${{ env.SEASON }}-${{ github.run_id }}
-          restore-keys: raw-${{ env.SEASON }}-
+          key: raw-${{ env.SLUG }}-${{ github.run_id }}
+          restore-keys: raw-${{ env.SLUG }}-
       - name: Pull results
         env:
           VEX_TOKEN: ${{ secrets.VEX_TOKEN }}

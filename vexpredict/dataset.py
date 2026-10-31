@@ -62,7 +62,9 @@ class Event:
 
     @property
     def is_worlds(self) -> bool:
-        return "world championship" in self.name.lower()
+        if self.level:  # the API's own label; names also match Worlds scrimmages
+            return self.level.lower() == "world"
+        return "world championship" in self.name.lower() and "scrimmage" not in self.name.lower()
 
 
 @dataclass(frozen=True)
