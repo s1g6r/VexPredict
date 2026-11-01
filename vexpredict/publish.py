@@ -10,7 +10,7 @@ Writes site/data/<season>/:
                      prediction made *before* it was played, predicted final
                      rankings and captain odds (pre-event, and live if quals
                      remain), final rankings when finished
-  teams/<id>.json    rating history and match log for one team
+  teams/<id>.json    rating history, match log and awards for one team
   accuracy.json      backtest + simulator check results, if they have been run
 
 The API token never leaves the machine running this; the site is plain files.
@@ -376,13 +376,17 @@ def publish(season: Season, slug: str, out: Path | None = None, now_ts: float | 
                                         "inst": m.instance, "partner": [x for x in side if x != t], "opp": list(other),
                                         "score": sc, "opp_score": osc, "p_win": _r(pw, 3)})
     rank_of = {b["id"]: b["rank"] for b in board}
+    team_awards: dict[int, list] = defaultdict(list)     # every award, for team pages and comparisons
+    for a in sorted(season.awards, key=lambda a: season.events[a.event_id].start if a.event_id in season.events else 0):
+        for t in a.team_ids:
+            team_awards[t].append({"event": a.event_id, "award": a.name})
     for t in {b["id"] for b in board}:
         tm = season.teams[t]
         _write(out / "teams" / f"{t}.json", {
             "id": t, "number": tm.number, "name": tm.name, "region": tm.region, "country": tm.country,
             "rating": _r(current.get(t)), "rank": rank_of.get(t), "skills": best_skills.get(t),
             "history": history.get(t, []), "matches": team_matches.get(t, []),
-            "schedule": sched_team.get(t, {}),
+            "schedule": sched_team.get(t, {}), "awards": team_awards.get(t, []),
             "events": sorted({x["event"] for x in team_matches.get(t, [])},
                              key=lambda e: season.events[e].start)})
     names = {str(t): season.teams[t].number for t in season.teams}

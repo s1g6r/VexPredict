@@ -42,6 +42,8 @@ const f2 = x => (Math.abs(x) < 0.005 ? 0 : x).toFixed(2);
 const rnd = x => (x == null ? "–" : Math.round(x));
 const num = id => NUMBERS[id] || id;
 const teamLink = (id, extra = "") => `<a href="#/team/${id}" class="${myTeam() === id ? "me" : ""}" ${extra}>${esc(num(id))}</a>`;
+// a link to compare a team with mine (or the compare page with it filled in)
+const cmpLink = (id, label) => { const me = myTeam(); return me && me !== id ? `<a class="cmplink" href="#/compare/${me}/${id}" title="Compare ${esc(num(id))} with ${esc(num(me))}">${label || "vs " + esc(num(me))}</a>` : ""; };
 function statusPill(s, league = false) {
   if (league && s === "live") return `<span class="pill">League, in progress</span>`;
   const label = { live: "Live", upcoming: "Upcoming", done: "Finished", "skills-only": "Skills only", "no-results": "No results" }[s] || s;
@@ -109,6 +111,7 @@ async function route() {
     else if (page === "qualify") await qualifyPage();
     else if (page === "skills") await skillsPage();
     else if (page === "plan") await planPage();
+    else if (page === "compare") await comparePage(id ? +id : null, sub ? +sub : null);
     else app.innerHTML = `<p>That page doesn't exist. <a href="#/">Go to the home page</a>.</p>`;
   } catch (e) {
     console.error(e);
@@ -124,6 +127,14 @@ function setupSearch() {
   const show = () => {
     const q = input.value.trim().toLowerCase();
     if (!q) { list.hidden = true; return; }
+    const pair = q.split(/\s+(?:vs\.?|v|versus|and|&)\s+|\s*,\s*|\s+/).filter(Boolean);
+    if (pair.length === 2) {
+      const ids = pair.map(p => byNumber.find(t => t.n.toLowerCase() === p)?.id);
+      if (ids[0] && ids[1] && ids[0] !== ids[1]) {
+        list.innerHTML = `<li><a href="#/compare/${ids[0]}/${ids[1]}">Compare ${esc(num(ids[0]))} and ${esc(num(ids[1]))} <small>side by side</small></a></li>`;
+        list.hidden = false; return;
+      }
+    }
     const teams = byNumber.filter(t => t.n.toLowerCase().startsWith(q)).slice(0, 6)
       .map(t => `<li><a href="#/team/${t.id}">${esc(t.n)} <small>team</small></a></li>`);
     const evs = META.events.filter(e => e.name.toLowerCase().includes(q) || e.sku.toLowerCase().includes(q)).slice(0, 6)
@@ -160,6 +171,7 @@ async function home() {
     ["#/qualify", "Qualify", "Who has earned a spot at States or Worlds, and who's next in line on skills.", q ? (qTeams ? `${qTeams} teams qualified so far` : "Fills in as events post awards") : ""],
     ["#/skills", "Skills", "Season skills standings by region, with a filter for teams still without a spot.", sk && sk.length ? `Top score: ${sk[0].score} (${esc(sk[0].number)})` : ""],
     ["#/plan", "Plan", "Upcoming events near you, how strong each field is, and where you'd rank.", soon ? `${soon} events with registered teams in the next 30 days` : "See the season's calendar"],
+    ["#/compare", "Compare", "Two teams side by side: who'd win, head to head, common opponents and shared events.", myTeam() ? `Start from ${esc(num(myTeam()))}` : "Any two teams this season"],
   ].filter(t => t[3] !== "" || t[0] === "#/events");
   let next = "";
   const me = myTeam();
@@ -354,7 +366,7 @@ function teamsTab(el, ev) {
   const n = notes();
   const rows = ev.teams.slice().sort((a, b) => (b.rating_now ?? -1) - (a.rating_now ?? -1));
   el.innerHTML = `<div class="panel tablewrap"><table><thead><tr><th>Team</th><th class="n">Rating</th><th class="n">Skills here</th><th class="n">Rank</th><th>Your notes</th></tr></thead><tbody>
-    ${rows.map(t => `<tr class="${myTeam() === t.id ? "mine" : ""}"><td class="t">${teamLink(t.id)} <span class="muted">${esc(t.name)}</span></td><td class="n">${rnd(t.rating_now)}</td>
+    ${rows.map(t => `<tr class="${myTeam() === t.id ? "mine" : ""}"><td class="t">${teamLink(t.id)} <span class="muted">${esc(t.name)}</span> ${cmpLink(t.id)}</td><td class="n">${rnd(t.rating_now)}</td>
       <td class="n">${t.skills ?? "–"}</td><td class="n">${t.rank ?? "–"}</td><td>${esc((n[t.id]?.tags || []).join(", "))}</td></tr>`).join("")}
   </tbody></table></div>`;
 }
@@ -366,7 +378,7 @@ function briefTab(el, ev, teams) {
   const n = notes();
   const card = (id, color) => {
     const t = teams.get(id) || {}; const r = sim.rates?.[id] || {}; const note = n[id];
-    return `<div class="card ${color}">${teamLink(id)} <p>${esc(t.name || "")}</p>
+    return `<div class="card ${color}">${teamLink(id)} ${cmpLink(id, "compare")} <p>${esc(t.name || "")}</p>
       <p>Rating ${rnd(t.rating_now)}${t.rank ? ` · rank ${t.rank}` : ""}${t.skills ? ` · skills ${t.skills}` : ""}</p>
       ${r.awp != null ? `<p>Auton win point ${pct(r.awp)} · auton bonus ${pct(r.auton)}</p>` : ""}
       ${note ? `<p class="note">${esc([...(note.tags || []), note.text].filter(Boolean).join(" · "))}</p>` : ""}</div>`;
@@ -472,7 +484,9 @@ async function teamPage(id) {
       <div class="stat"><b>${decided.length ? pct(right / decided.length) : "–"}</b><span>of its results predicted right</span></div>
     </div>
     ${season}
-    <p><button id="me" class="${me ? "" : "primary"}" aria-pressed="${me}">${me ? `${esc(t.number)} is your team` : "This is my team"}</button></p>
+    <p class="row"><button id="me" class="${me ? "" : "primary"}" aria-pressed="${me}">${me ? `${esc(t.number)} is your team` : "This is my team"}</button>
+      ${!me && myTeam() ? `<a class="btn" href="#/compare/${myTeam()}/${id}">Compare with ${esc(num(myTeam()))}</a>` : ""}
+      <a class="btn" href="#/compare/${id}">Compare ${esc(t.number)} with…</a></p>
     ${t.history.length > 1 ? `<section class="panel"><h2>Rating through the season</h2>${spark(t.history)}</section>` : ""}
     <section class="panel"><h2>Scouting notes</h2>
       <div class="tags" id="tags">${TAGS.map(g => `<button class="tag" aria-pressed="${note.tags.includes(g)}">${esc(g)}</button>`).join("")}</div>
@@ -813,6 +827,260 @@ async function planPage() {
   $("#pl").onchange = e => { state.level = e.target.value; draw(); };
   $("#pg").onchange = e => { state.leagues = e.target.checked; draw(); };
   draw();
+}
+
+// ---------- compare two teams ----------
+const STAGE = { 6: "Round of 16", 3: "Quarterfinals", 4: "Semifinals", 5: "Finals" };
+const STAGE_ORDER = [6, 3, 4, 5];
+const idOfNumber = n => {
+  const want = String(n || "").trim().toUpperCase();
+  const hit = Object.entries(NUMBERS).find(([, v]) => String(v).toUpperCase() === want);
+  return hit ? +hit[0] : null;
+};
+const mean = xs => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+const rec3 = ms => {
+  const r = [0, 0, 0];
+  for (const m of ms) r[m.score > m.opp_score ? 0 : m.score < m.opp_score ? 1 : 2]++;
+  return r;
+};
+const recText = ([w, l, t]) => `${w}–${l}${t ? "–" + t : ""}`;
+const winShare = ([w, l, t]) => (w + l + t ? (w + t / 2) / (w + l + t) : null);
+
+// everything we can say about one team, from its published files
+async function teamFacts(id, ctx) {
+  const t = await get(`${SEASON}/teams/${id}.json`).catch(() => null);
+  const card = ctx.scanIx.get(id);
+  const sk = ctx.sk.find(x => x.id === id);
+  const quals = ctx.q?.teams[id]?.quals || [];
+  const f = { id, number: t?.number || card?.num || num(id), name: t?.name || card?.name || "",
+              where: t ? [t.region, t.country].filter(Boolean).join(", ") : card?.loc || "",
+              rating: t?.rating ?? null, rank: t?.rank ?? null, history: t?.history || [], matches: t?.matches || [],
+              events: t?.events || [], schedule: t?.schedule || {}, awards: t?.awards || [], sk, quals, rated: !!t };
+  const qm = f.matches.filter(m => m.round === 2), em = f.matches.filter(m => m.round !== 2);
+  f.record = rec3(f.matches); f.elimRecord = rec3(em);
+  f.avgFor = mean(qm.map(m => m.score)); f.avgAgainst = mean(qm.map(m => m.opp_score));
+  f.margin = f.avgFor == null ? null : f.avgFor - f.avgAgainst;
+  const r = ctx.ratingOf;
+  f.oppRating = mean(f.matches.flatMap(m => m.opp).map(x => r[x]).filter(x => x != null));
+  f.partnerRating = mean(f.matches.flatMap(m => m.partner).map(x => r[x]).filter(x => x != null));
+  f.upsets = f.matches.filter(m => m.p_win != null && m.p_win < 0.5 && m.score > m.opp_score).length;
+  f.luck = mean(Object.values(f.schedule));
+  f.titles = f.awards.filter(a => /^tournament champions/i.test(a.award)).length;
+  f.judged = f.awards.filter(a => /excellence|design|innovate|think|amaze|build|create|judges/i.test(a.award)).length;
+  // how far it went at each event: champion / finalist from awards, else the last elim stage it played
+  f.finish = {};
+  for (const eid of f.events) {
+    const aw = f.awards.filter(a => a.event === eid).map(a => a.award.toLowerCase());
+    const stages = em.filter(m => m.event === eid).map(m => STAGE_ORDER.indexOf(m.round)).filter(i => i >= 0);
+    f.finish[eid] = aw.some(a => a.startsWith("tournament champions")) ? "Champion"
+      : aw.some(a => a.startsWith("tournament finalists")) ? "Finalist"
+      : stages.length ? STAGE[STAGE_ORDER[Math.max(...stages)]] : "Quals";
+  }
+  return f;
+}
+
+function compareChart(A, B) {
+  const ha = A.history.filter(x => x.rating != null), hb = B.history.filter(x => x.rating != null);
+  if (ha.length + hb.length < 3) return "";
+  const dates = [...new Set([...ha, ...hb].map(x => x.date))].sort();
+  const t0 = Date.parse(dates[0]), t1 = Date.parse(dates[dates.length - 1]);
+  const ys = [...ha, ...hb].map(x => x.rating), lo = Math.min(...ys), hi = Math.max(...ys);
+  const W = 640, H = 180, L = 36, R = 12, T = 12, Bm = 26;
+  const x = d => L + (t1 > t0 ? (Date.parse(d) - t0) / (t1 - t0) : 0.5) * (W - L - R);
+  const y = v => T + (1 - (v - lo) / Math.max(hi - lo, 1)) * (H - T - Bm);
+  const line = (h, cls) => h.length ? `<path class="${cls}" vector-effect="non-scaling-stroke" d="${h.map((p, i) => `${i ? "L" : "M"}${x(p.date).toFixed(1)},${y(p.rating).toFixed(1)}`).join("")}"/>
+    ${h.map(p => `<circle class="${cls}" cx="${x(p.date).toFixed(1)}" cy="${y(p.rating).toFixed(1)}" r="3.5"><title>${esc(p.date)}: ${rnd(p.rating)}</title></circle>`).join("")}` : "";
+  const ticks = [lo, (lo + hi) / 2, hi].map(v => `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${rnd(v)}</text><line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>`).join("");
+  return `<section class="panel"><h2>Rating through the season</h2>
+    <svg class="cmpchart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(A.number)} went from ${rnd(ha[0]?.rating)} to ${rnd(ha.at(-1)?.rating)}; ${esc(B.number)} from ${rnd(hb[0]?.rating)} to ${rnd(hb.at(-1)?.rating)}">
+      <g class="grid">${ticks}</g>${line(ha, "a")}${line(hb, "b")}
+      <text x="${L}" y="${H - 6}">${esc(dates[0])}</text><text x="${W - R}" y="${H - 6}" text-anchor="end">${esc(dates.at(-1))}</text>
+    </svg>
+    <p class="cmplegend"><span class="ka">${esc(A.number)}</span><span class="kb">${esc(B.number)}</span></p></section>`;
+}
+
+async function comparePage(aId, bId) {
+  setTitle("Compare teams");
+  const [board, sk, q, scan, plan] = await Promise.all([get(`${SEASON}/leaderboard.json`), get(`${SEASON}/skills.json`).catch(() => []),
+    get(`${SEASON}/qualify.json`).catch(() => null), get(`${SEASON}/scan.json`).catch(() => null), get(`${SEASON}/plan.json`).catch(() => null)]);
+  const scanIx = new Map();
+  if (scan) scan.t.id.forEach((id, i) => scanIx.set(id, { num: scan.t.num[i], name: scan.t.name[i], loc: scan.t.loc[i] }));
+  const ratingOf = Object.fromEntries(board.map(b => [b.id, b.rating]));
+  const me = myTeam();
+  if (!aId && me && me !== bId) aId = me;
+  const picker = `<form class="cmppick" id="cmpform" autocomplete="off">
+      <label class="sr" for="ca">First team</label><input type="text" id="ca" list="cmpteams" value="${esc(aId ? num(aId) : "")}" placeholder="Team, e.g. 2360A" spellcheck="false" autocapitalize="characters">
+      <button type="button" class="iconbtn" id="cswap" aria-label="Swap the two teams" title="Swap">⇄</button>
+      <label class="sr" for="cb">Second team</label><input type="text" id="cb" list="cmpteams" value="${esc(bId ? num(bId) : "")}" placeholder="Team, e.g. 333Y" spellcheck="false" autocapitalize="characters">
+      <button class="primary" type="submit">Compare</button>
+      <datalist id="cmpteams"></datalist>
+    </form><p class="muted small" id="cmpmsg"></p>`;
+  const wire = () => {
+    const dl = $("#cmpteams");
+    const fill = () => { if (!dl.childElementCount) dl.innerHTML = board.map(b => `<option value="${esc(b.number)}">${esc(b.name)}</option>`).join(""); };
+    $("#ca").addEventListener("focus", fill); $("#cb").addEventListener("focus", fill);
+    $("#cswap").onclick = () => { const a = $("#ca").value; $("#ca").value = $("#cb").value; $("#cb").value = a; $("#cmpform").requestSubmit(); };
+    $("#cmpform").onsubmit = e => {
+      e.preventDefault();
+      const a = idOfNumber($("#ca").value), b = idOfNumber($("#cb").value);
+      const bad = [[a, $("#ca").value], [b, $("#cb").value]].filter(([id, v]) => v.trim() && !id).map(([, v]) => v.trim().toUpperCase());
+      if (bad.length) { $("#cmpmsg").textContent = `No team ${bad.join(" or ")} this season. Check the number.`; return; }
+      if (!a || !b) { $("#cmpmsg").textContent = "Enter two team numbers."; return; }
+      if (a === b) { $("#cmpmsg").textContent = "Pick two different teams."; return; }
+      location.hash = `#/compare/${a}/${b}`;
+    };
+  };
+  if (!aId || !bId) {
+    app.innerHTML = `<h1>Compare two teams</h1>
+      <p class="lede">Ratings, records, scoring, skills, awards and qualification side by side, plus who'd win if they met, every match they've played against each other, the opponents they share and the events they've both been to.</p>
+      ${picker}
+      ${me ? "" : `<p class="muted">Tip: set your team on its page ("This is my team") and it fills in here automatically.</p>`}`;
+    wire();
+    return;
+  }
+  const ctx = { scanIx, sk, q, ratingOf };
+  const [A, B] = await Promise.all([teamFacts(aId, ctx), teamFacts(bId, ctx)]);
+  NUMBERS[aId] = A.number; NUMBERS[bId] = B.number;
+  setTitle(`${A.number} vs ${B.number}`);
+
+  // ---- if they met ----
+  let meet;
+  if (A.rating != null && B.rating != null && scan) {
+    const k = scan.k, med = scan.med;
+    const pA = 1 / (1 + Math.exp(-k * (A.rating - B.rating)));
+    const pTog = 1 / (1 + Math.exp(-k * (A.rating + B.rating - 2 * med)));
+    const gap = A.rating - B.rating;
+    meet = `<section class="panel cmpmeet"><h2>If they met</h2>
+      <p class="muted">Each with an average partner, from the same ratings that predict every match on this site.</p>
+      <div class="cmptug" role="img" aria-label="${esc(A.number)} ${pct(pA)} to win, ${esc(B.number)} ${pct(1 - pA)}">
+        <b class="a" style="flex-basis:${Math.max(4, Math.min(96, pA * 100))}%">${esc(A.number)} ${pct(pA)}</b><b class="b" style="flex-basis:${Math.max(4, Math.min(96, (1 - pA) * 100))}%">${pct(1 - pA)} ${esc(B.number)}</b></div>
+      <p>${Math.abs(gap) < 0.5 ? "They add about the same to an alliance's score." : `${esc(gap > 0 ? A.number : B.number)} adds about <b>${Math.abs(gap).toFixed(1)} more points</b> to its alliance's score per match.`}
+        Allied together, they'd beat an average alliance <b>${pct(pTog)}</b> of the time.</p></section>`;
+  } else {
+    const who = [A, B].filter(x => x.rating == null).map(x => x.number);
+    meet = `<p class="callout">${esc(who.join(" and "))} ${who.length > 1 ? "have" : "has"} no matches this season yet, so there's no rating to predict with. Skills and awards are compared below where posted.</p>`;
+  }
+
+  // ---- side-by-side rows ----
+  const qs = (f, g) => qStatus(f.quals, g);
+  const qWord = f => {
+    const s = qs(f, "World Championship"), r = qs(f, "Region championship (States)");
+    if (s && s !== "possible") return "Worlds";
+    if (r && r !== "possible") return s === "possible" ? "States (Worlds pending)" : "States";
+    if (r === "possible" || s === "possible") return "Pending";
+    return "Not yet";
+  };
+  const qScore = f => ({ Worlds: 3, States: 2, "States (Worlds pending)": 2, Pending: 1 }[qWord(f)] || 0);
+  const ws = f => winShare(f.record);
+  const rows = [
+    ["Rating", A.rating, B.rating, "high", v => (v == null ? "–" : v.toFixed(1)), "Points added to its alliance's score per match"],
+    ["World rank", A.rank, B.rank, "low", v => (v ? "#" + v : "–"), `Among ${META.teams_rated} rated High School teams`],
+    ["Record", ws(A), ws(B), "high", (v, f) => (f.matches.length ? `${recText(f.record)} <small>${pct(v)}</small>` : "–"), "All matches; ties count half"],
+    ["Elimination record", winShare(A.elimRecord), winShare(B.elimRecord), "high", (v, f) => (v == null ? "–" : `${recText(f.elimRecord)}`), ""],
+    ["Points scored", A.avgFor, B.avgFor, "high", v => (v == null ? "–" : v.toFixed(1)), "Alliance score per qualification match"],
+    ["Points allowed", A.avgAgainst, B.avgAgainst, "low", v => (v == null ? "–" : v.toFixed(1)), "Opponents' score per qualification match"],
+    ["Average margin", A.margin, B.margin, "high", v => (v == null ? "–" : (v > 0 ? "+" : "") + v.toFixed(1)), ""],
+    ["Best skills", A.sk?.score, B.sk?.score, "high", v => v ?? "–", "Driver plus autonomous from one event"],
+    ["Autonomous skills", A.sk?.auto, B.sk?.auto, "high", v => v ?? "–", ""],
+    ["Driver skills", A.sk?.driver, B.sk?.driver, "high", v => v ?? "–", ""],
+    ["Skills world rank", A.sk?.rank, B.sk?.rank, "low", v => (v ? "#" + v : "–"), ""],
+    ["Tournament wins", A.titles, B.titles, "high", v => v, "Tournament Champions awards"],
+    ["Judged awards", A.judged, B.judged, "high", v => v, "Excellence, Design, Innovate, Think, Amaze, Build, Create, Judges"],
+    ["Qualified", qScore(A), qScore(B), "high", (v, f) => qWord(f), "From official award results; pending means it depends on the event's spot count"],
+    ["Upset wins", A.upsets, B.upsets, "high", v => v, "Wins the model gave less than a 50% chance"],
+    ["Opponent strength", A.oppRating, B.oppRating, null, v => (v == null ? "–" : rnd(v)), "Average current rating of the teams it has played against"],
+    ["Partner strength", A.partnerRating, B.partnerRating, null, v => (v == null ? "–" : rnd(v)), "Average current rating of its partners"],
+    ["Schedule luck", A.luck, B.luck, null, v => (v == null ? "–" : luckText(v)), "Extra wins its qualification schedules handed it, per event on average"],
+    ["Events played", A.events.length, B.events.length, null, v => v, ""],
+  ];
+  let leadA = 0, leadB = 0;
+  const rowHTML = rows.map(([label, va, vb, better, fmt, help]) => {
+    let wa = false, wb = false;
+    if (better && va != null && vb != null && va !== vb) {
+      const aBetter = better === "high" ? va > vb : va < vb;
+      wa = aBetter; wb = !aBetter;
+      if (wa) leadA++; else leadB++;
+    }
+    const bar = (v, o) => {
+      if (v == null || o == null || typeof v !== "number" || better == null) return "";
+      const hiV = Math.max(Math.abs(v), Math.abs(o)) || 1;
+      const share = better === "low" ? (Math.min(v, o) / (v || 1)) : Math.abs(v) / hiV;
+      return `<i style="--w:${Math.round(Math.max(0.04, Math.min(1, share)) * 100)}%"></i>`;
+    };
+    return `<div class="cmprow"><div class="cv a ${wa ? "lead" : ""}">${bar(va, vb)}<span>${fmt(va, A)}</span></div>
+      <div class="cl">${esc(label)}${help ? `<small>${esc(help)}</small>` : ""}</div>
+      <div class="cv b ${wb ? "lead" : ""}">${bar(vb, va)}<span>${fmt(vb, B)}</span></div></div>`;
+  }).join("");
+
+  // ---- head to head and as partners ----
+  const evName = Object.fromEntries(META.events.map(e => [e.id, e.name]));
+  const vs = A.matches.filter(m => m.opp.includes(bId)), together = A.matches.filter(m => m.partner.includes(bId));
+  const mLine = (m, side) => `<li><span><a href="#/event/${m.event}">${esc(evName[m.event] || "Event")}</a> · <b class="num">${matchName(m)}</b></span>
+    <span class="num"><b class="${m.score > m.opp_score ? "wtxt" : m.score < m.opp_score ? "ltxt" : ""}">${m.score > m.opp_score ? (side ? A.number + " won" : "Won") : m.score < m.opp_score ? (side ? B.number + " won" : "Lost") : "Tie"}</b> ${m.score}–${m.opp_score}</span></li>`;
+  const h2h = `<section class="panel"><h2>Against each other</h2>
+      ${vs.length ? `<p><b>${esc(A.number)} ${recText(rec3(vs))} ${esc(B.number)}</b> in ${vs.length} meeting${vs.length > 1 ? "s" : ""} this season.</p><ul class="list">${vs.slice().reverse().map(m => mLine(m, true)).join("")}</ul>`
+        : `<p class="muted">They haven't played against each other this season.</p>`}
+      ${together.length ? `<h3>As partners</h3><p>${recText(rec3(together))} together.</p><ul class="list">${together.slice().reverse().map(m => mLine(m, false)).join("")}</ul>` : ""}
+    </section>`;
+
+  // ---- common opponents ----
+  const vsMap = f => { const o = new Map(); for (const m of f.matches) for (const x of m.opp) { if (x === aId || x === bId) continue; if (!o.has(x)) o.set(x, []); o.get(x).push(m); } return o; };
+  const oa = vsMap(A), ob = vsMap(B);
+  const common = [...oa.keys()].filter(x => ob.has(x)).map(x => ({ id: x, a: rec3(oa.get(x)), b: rec3(ob.get(x)) }))
+    .sort((p, s) => (s.a[0] + s.a[1] + s.a[2] + s.b[0] + s.b[1] + s.b[2]) - (p.a[0] + p.a[1] + p.a[2] + p.b[0] + p.b[1] + p.b[2]));
+  const sumRec = key => common.reduce((acc, c) => acc.map((v, i) => v + c[key][i]), [0, 0, 0]);
+  const commonHTML = `<section class="panel"><h2>Common opponents</h2>
+    ${common.length ? `<p>Against the ${common.length} team${common.length > 1 ? "s" : ""} both have faced: <b>${esc(A.number)} ${recText(sumRec("a"))}</b>, <b>${esc(B.number)} ${recText(sumRec("b"))}</b>.</p>
+      <div class="tablewrap"><table><thead><tr><th>Opponent</th><th class="n">Rating</th><th class="n">${esc(A.number)}</th><th class="n">${esc(B.number)}</th></tr></thead><tbody>
+      ${common.slice(0, 15).map(c => { const sa = winShare(c.a), sb = winShare(c.b);
+        return `<tr><td class="t">${teamLink(c.id)}</td><td class="n">${rnd(ratingOf[c.id])}</td><td class="n ${sa > sb ? "wtxt" : ""}">${recText(c.a)}</td><td class="n ${sb > sa ? "wtxt" : ""}">${recText(c.b)}</td></tr>`; }).join("")}
+      </tbody></table></div>${common.length > 15 ? `<p class="muted small">Showing the 15 they've each played most.</p>` : ""}`
+      : `<p class="muted">They haven't faced any of the same teams yet.</p>`}</section>`;
+
+  // ---- shared events ----
+  const shared = A.events.filter(e => B.events.includes(e));
+  const evData = await Promise.all(shared.slice(-10).map(e => get(`${SEASON}/events/${e}.json`).catch(() => null)));
+  let aheadA = 0, aheadB = 0;
+  const sharedRows = shared.slice(-10).map((eid, i) => {
+    const ev = evData[i], ta = ev?.teams.find(x => x.id === aId), tb = ev?.teams.find(x => x.id === bId);
+    const ra = ta?.rank, rb = tb?.rank;
+    const same = ta && tb && ta.div === tb.div;
+    if (same && ra && rb && ra !== rb) { if (ra < rb) aheadA++; else aheadB++; }
+    const cell = (t, f, other) => t ? `<b class="${same && t.rank && other?.rank && t.rank < other.rank ? "wtxt" : ""}">${t.rank ? "#" + t.rank : "–"}</b> <small>${esc(t.record || "")}</small><br><small>${esc(f.finish[eid] || "")}</small>` : "–";
+    return `<tr><td><a href="#/event/${eid}">${esc(evName[eid] || "Event")}</a>${ta && tb && !same ? `<br><small class="muted">different divisions</small>` : ""}</td>
+      <td class="n">${cell(ta, A, tb)}</td><td class="n">${cell(tb, B, ta)}</td></tr>`;
+  }).join("");
+  const sharedHTML = `<section class="panel"><h2>Events they've both played</h2>
+    ${shared.length ? `<p>${aheadA + aheadB ? `In the same division, <b>${esc(A.number)}</b> finished qualifications ahead ${aheadA} time${aheadA === 1 ? "" : "s"} and <b>${esc(B.number)}</b> ${aheadB} time${aheadB === 1 ? "" : "s"}.` : ""}</p>
+      <div class="tablewrap"><table><thead><tr><th>Event</th><th class="n">${esc(A.number)}</th><th class="n">${esc(B.number)}</th></tr></thead><tbody>${sharedRows}</tbody></table></div>`
+      : `<p class="muted">No events in common yet.</p>`}</section>`;
+
+  // ---- what's next: events both are registered for ----
+  const today = new Date().toISOString().slice(0, 10);
+  const next = (plan?.events || []).filter(e => e.end >= today && e.teams?.includes(aId) && e.teams?.includes(bId));
+  const nextHTML = next.length ? `<p class="callout">Both are registered for ${next.slice(0, 3).map(e => `<a href="${META.events.some(x => x.id === e.id) ? `#/event/${e.id}` : `https://events.vex.com/robot-competitions/vex-robotics-competition/${encodeURIComponent(e.sku)}.html`}">${esc(e.name)}</a> (${new Date(e.date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })})`).join(", ")}.</p>` : "";
+
+  // ---- awards ----
+  const awardList = f => f.awards.length ? `<ul class="list">${f.awards.slice().reverse().map(a => `<li><span>${esc(a.award)}</span><a class="small" href="#/event/${a.event}">${esc(evName[a.event] || "")}</a></li>`).join("")}</ul>` : `<p class="muted">None yet.</p>`;
+
+  app.innerHTML = `<h1>${esc(A.number)} <span class="muted vsword">vs</span> ${esc(B.number)}</h1>
+    ${picker}
+    <div class="cmphead">
+      <a class="cmpteam a" href="#/team/${aId}"><b>${esc(A.number)}</b><span>${esc(A.name)}</span><small>${esc(A.where)}</small></a>
+      <a class="cmpteam b" href="#/team/${bId}"><b>${esc(B.number)}</b><span>${esc(B.name)}</span><small>${esc(B.where)}</small></a>
+    </div>
+    ${nextHTML}
+    ${meet}
+    <section class="panel"><h2>Side by side</h2>
+      <p class="muted">${leadA + leadB ? `${esc(leadA >= leadB ? A.number : B.number)} is ahead in ${Math.max(leadA, leadB)} of the ${leadA + leadB} categories where one team leads. ` : ""}Highlighted values are the better one; the last rows are context, not better or worse.</p>
+      <div class="cmprows">${rowHTML}</div></section>
+    ${compareChart(A, B)}
+    ${h2h}
+    ${sharedHTML}
+    ${commonHTML}
+    <section class="panel"><h2>Awards</h2><div class="cmpawards"><div><h3>${esc(A.number)}</h3>${awardList(A)}</div><div><h3>${esc(B.number)}</h3>${awardList(B)}</div></div></section>
+    <p class="muted small">Share this comparison: the page address links straight to it.</p>`;
+  wire();
 }
 
 boot();

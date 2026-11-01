@@ -40,9 +40,11 @@ def test_every_page_renders_without_errors(server):
     ev = json.loads((root / "data" / "t" / "events" / "50040.json").read_text())
     me = ev["pending"][0]["red"][0]
     num_me = next(t["number"] for t in ev["teams"] if t["id"] == me)
+    other = ev["pending"][0]["blue"][0]       # an opponent at the same event: shared event and a meeting to show
     pages = ["#/", "#/events", "#/leaderboard", "#/accuracy", "#/event/50040/matches", "#/event/50040/forecast",
              "#/event/50040/picks", "#/event/50040/teams", "#/event/50040/brief", "#/event/50000/schedule", "#/event/90000/forecast",
-             "#/event/50000/forecast", f"#/team/{me}", "#/events?s=league", "#/qualify", "#/skills", "#/plan", "#/nope"]
+             "#/event/50000/forecast", f"#/team/{me}", "#/events?s=league", "#/qualify", "#/skills", "#/plan", "#/nope",
+             "#/compare", f"#/compare/{me}", f"#/compare/{me}/{other}"]
     with pw.sync_playwright() as p:
         b = p.chromium.launch()
         ctx = b.new_context(viewport={"width": 390, "height": 844})
@@ -123,3 +125,41 @@ def test_every_page_renders_without_errors(server):
         assert "Your next match" in page.inner_text("main")
         b.close()
     assert not errors, errors
+
+
+def test_compare_page(server):
+    """Two teams side by side: the picker routes to the comparison, the
+    sections render, head to head counts the same meetings as the team's own
+    match log, and searching "A vs B" offers the comparison."""
+    url, root = server
+    import json
+    ev = json.loads((root / "data" / "t" / "events" / "50040.json").read_text())
+    a, b = ev["pending"][0]["red"][0], ev["pending"][0]["blue"][0]
+    na = next(t["number"] for t in ev["teams"] if t["id"] == a)
+    nb = next(t["number"] for t in ev["teams"] if t["id"] == b)
+    ta = json.loads((root / "data" / "t" / "teams" / f"{a}.json").read_text())
+    meetings = sum(1 for m in ta["matches"] if b in m["opp"])
+    with pw.sync_playwright() as p:
+        br = p.chromium.launch()
+        page = br.new_page(viewport={"width": 1200, "height": 900})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(url + "#/compare")
+        page.wait_for_timeout(250)
+        page.fill("#ca", na); page.fill("#cb", nb); page.click("#cmpform button.primary")
+        page.wait_for_timeout(400)
+        assert page.url.endswith(f"#/compare/{a}/{b}")
+        main = page.inner_text("main")
+        for heading in ("If they met", "Side by side", "Against each other", "Events they've both played", "Common opponents", "Awards"):
+            assert heading in main, heading
+        assert page.locator(".cmprow").count() >= 15
+        if meetings:
+            assert f"in {meetings} meeting" in main
+        page.click("#cswap"); page.wait_for_timeout(400)
+        assert page.url.endswith(f"#/compare/{b}/{a}")
+        page.fill("#ca", "NOPE1"); page.click("#cmpform button.primary"); page.wait_for_timeout(150)
+        assert "No team NOPE1" in page.inner_text("#cmpmsg")
+        page.fill("#q", f"{na} vs {nb}"); page.wait_for_timeout(150)
+        assert "Compare" in page.inner_text("#suggest")
+        br.close()
+        assert not errors, errors
